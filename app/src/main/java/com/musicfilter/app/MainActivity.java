@@ -26,7 +26,7 @@ public final class MainActivity extends Activity {
     private TextView progressText;
     private ProgressBar progress;
     private String screen = "", lastState = "";
-    private boolean ar, dark, fresh, fullscreen, preparing, checkingInput, preparingShared;
+    private boolean ar, dark, fresh, fullscreen, preparing, checkingInput, preparingShared, extractingAudio;
     private volatile String modelPreparationError;
     private Runnable pendingModelAction;
     private Button originalButton, removedButton;
@@ -250,6 +250,7 @@ public final class MainActivity extends Activity {
             gap(12);label(body,t("Preview ready", "Preview ready"),14,accent);gap(8);
             body.addView(button(t("Save", "Save"),true,()->saveToGallery(cleanedVideo)));
             body.addView(button(t("Share", "Share"),false,()->share(cleanedVideo,"video/mp4")));
+            body.addView(button(t("Extract Audio", "Extract Audio"),false,this::extractAudio));
         } else {
             if (belongsToSelection && (lastState.equals("FAILED") || lastState.equals("CANCELLED") || lastState.equals("INTERRUPTED"))) {
                 label(body, t("Processing could not finish. ", "Processing could not finish. ") + s.getString("message", ""), 14, dark ? 0xFFFFB4AB : 0xFFB3261E);
@@ -425,6 +426,105 @@ public final class MainActivity extends Activity {
                 runOnUiThread(()->problem(t("Could not save the video.", "Could not save the video."), e));
             }
         }).start();
+    }
+    private void extractAudio() {
+        if (extractingAudio || cleanedVideo == null) return;
+        extractingAudio = true;
+        Toast.makeText(this, t("Extracting processed audio…", "Extracting processed audio…"), Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            try {
+                File audio = remuxProcessedAudio(cleanedVideo);
+                runOnUiThread(() -> {
+                    extractingAudio = false;
+                    new AlertDialog.Builder(this).setTitle(t("Audio ready", "Audio ready")).setMessage(audio.getName())
+                            .setPositiveButton(t("Save Audio", "Save Audio"), (d,w) -> saveAudio(Uri.fromFile(audio), audio.getName()))
+                            .setNeutralButton(t("Share Audio", "Share Audio"), (d,w) -> share(Uri.fromFile(audio), "audio/mp4"))
+                            .setNegativeButton(t("Done", "Done"), null).show();
+                });
+            } catch (Exception error) {
+                runOnUiThread(() -> { extractingAudio = false; problem(t("Could not extract the processed audio.", "Could not extract the processed audio."), error); });
+            }
+        }, "Processed-audio-remux").start();
+    }
+    private File remuxProcessedAudio(Uri source) throws Exception {
+        File folder = new File(getCacheDir(), "processing/audio");
+        if (!folder.exists() && !folder.mkdirs()) throw new IOException("Could not create temporary audio folder");
+        File output = new File(folder, safeStem(fileName(selectedVideo)) + "_music_removed.m4a");
+        if (output.exists() && !output.delete()) throw new IOException("Could not replace temporary audio");
+        android.media.MediaExtractor extractor = new android.media.MediaExtractor();
+        android.media.MediaMuxer muxer = null;
+        boolean started = false, wroteSample = false, completed = false;
+        try {
+            extractor.setDataSource(this, source, null);
+            int inputTrack = -1;
+            android.media.MediaFormat format = null;
+            for (int i = 0; i < extractor.getTrackCount(); i++) {
+                android.media.MediaFormat candidate = extractor.getTrackFormat(i);
+                String mime = candidate.getString(android.media.MediaFormat.KEY_MIME);
+                if (mime != null && mime.startsWith("audio/")) { inputTrack = i; format = candidate; break; }
+            }
+            if (inputTrack < 0 || format == null) throw new IOException("Processed result has no audio track");
+            if (!"audio/mp4a-latm".equals(format.getString(android.media.MediaFormat.KEY_MIME))) throw new IOException("Processed result audio is not AAC");
+            extractor.selectTrack(inputTrack);
+            muxer = new android.media.MediaMuxer(output.getAbsolutePath(), android.media.MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
+            int outputTrack = muxer.addTrack(format);
+            muxer.start(); started = true;
+            int capacity = format.containsKey(android.media.MediaFormat.KEY_MAX_INPUT_SIZE) ? format.getInteger(android.media.MediaFormat.KEY_MAX_INPUT_SIZE) : 256 * 1024;
+            java.nio.ByteBuffer buffer = java.nio.ByteBuffer.allocateDirect(Math.max(256 * 1024, capacity));
+            android.media.MediaCodec.BufferInfo info = new android.media.MediaCodec.BufferInfo();
+            long firstTimeUs = -1;
+            while (true) {
+                buffer.clear();
+                int size = extractor.readSampleData(buffer, 0);
+                if (size < 0) break;
+                long sampleTimeUs = extractor.getSampleTime();
+                if (firstTimeUs < 0) firstTimeUs = sampleTimeUs;
+                info.set(0, size, Math.max(0, sampleTimeUs - firstTimeUs), extractor.getSampleFlags());
+                muxer.writeSampleData(outputTrack, buffer, info);
+                wroteSample = true;
+                extractor.advance();
+            }
+            if (!wroteSample) throw new IOException("Processed result audio is empty");
+            muxer.stop(); started = false;
+            completed = true;
+            return output;
+        } finally {
+            extractor.release();
+            if (muxer != null) {
+                if (started) try { muxer.stop(); } catch (Exception ignored) {}
+                muxer.release();
+            }
+            if (!completed && output.exists()) output.delete();
+        }
+    }
+    private void saveAudio(Uri source, String displayName) {
+        new Thread(() -> {
+            Uri saved = null;
+            try {
+                android.content.ContentValues values = new android.content.ContentValues();
+                values.put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, displayName);
+                values.put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "audio/mp4");
+                values.put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_MUSIC + "/MusicFilter");
+                values.put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1);
+                saved = getContentResolver().insert(android.provider.MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, values);
+                if (saved == null) throw new IOException("Could not create saved audio");
+                try (InputStream in = getContentResolver().openInputStream(source); OutputStream out = getContentResolver().openOutputStream(saved)) {
+                    if (in == null || out == null) throw new IOException("Could not open audio destination");
+                    byte[] buffer = new byte[65536]; int count;
+                    while ((count = in.read(buffer)) != -1) out.write(buffer, 0, count);
+                }
+                values.clear(); values.put(android.provider.MediaStore.MediaColumns.IS_PENDING, 0);
+                getContentResolver().update(saved, values, null, null);
+                Uri ready = saved;
+                runOnUiThread(() -> new AlertDialog.Builder(this).setTitle(t("Saved", "Saved")).setMessage(t("Audio saved to Music/MusicFilter", "Audio saved to Music/MusicFilter"))
+                        .setPositiveButton(t("Open", "Open"), (d,w) -> previewAudio(ready))
+                        .setNeutralButton(t("Share Audio", "Share Audio"), (d,w) -> share(ready, "audio/mp4"))
+                        .setNegativeButton(t("Done", "Done"), null).show());
+            } catch (Exception error) {
+                if (saved != null) getContentResolver().delete(saved, null, null);
+                runOnUiThread(() -> problem(t("Could not save the audio.", "Could not save the audio."), error));
+            }
+        }, "Processed-audio-save").start();
     }
     private void share(Uri uri,String mime) { try{ Uri contentUri = uri; if (uri.getScheme() != null && uri.getScheme().equals("file")) { java.io.File file = new java.io.File(uri.getPath()); contentUri = androidx.core.content.FileProvider.getUriForFile(this, "com.musicfilter.app.v2.provider", file); } Intent send=new Intent(Intent.ACTION_SEND).setType(mime).putExtra(Intent.EXTRA_STREAM,contentUri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);send.setClipData(android.content.ClipData.newRawUri("Media",contentUri));startActivity(Intent.createChooser(send,t("Share", "Share")));}catch(Exception e){problem(t("No app is available to share this file.", "No app is available to share this file."),e);} }
     @Override protected void onActivityResult(int request,int result,Intent data) { 
