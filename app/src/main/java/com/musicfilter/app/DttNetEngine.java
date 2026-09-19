@@ -20,7 +20,7 @@ final class DttNetEngine {
     static final int RETAINED_BINS = 2048;
     static final int FRAMES = 256;
     static final int CHUNK_SAMPLES = HOP_SIZE * (FRAMES - 1); // 261120
-    static final int OVERLAP_SAMPLES = CHUNK_SAMPLES / 2;
+    static final int OVERLAP_SAMPLES = CHUNK_SAMPLES / 8; // 12.5% overlap = 32640 samples
 
     private static final float[] WINDOW = makeWindow();
     private static final ThreadLocal<FloatFFT_1D> FFT = ThreadLocal.withInitial(() -> new FloatFFT_1D(FFT_SIZE));
@@ -183,9 +183,9 @@ final class DttNetEngine {
             Log.i("MusicFilterBench", "ORT version: " + ai.onnxruntime.OrtEnvironment.getEnvironment().getVersion());
             Log.i("MusicFilterBench", "FP16 mode: " + BenchConfig.USE_FP16);
             Log.i("MusicFilterBench", "Execution provider: " + BenchConfig.EXECUTION_PROVIDER);
-            Log.i("MusicFilterBench", "Intra-op threads: " + Math.max(1, Runtime.getRuntime().availableProcessors() - 1));
+            Log.i("MusicFilterBench", "Intra-op threads: " + threads);
             Log.i("MusicFilterBench", "Inter-op threads: 1");
-            Log.i("MusicFilterBench", "Overlap ratio: " + BenchConfig.OVERLAP_RATIO);
+            Log.i("MusicFilterBench", "Overlap ratio: " + ((double) OVERLAP_SAMPLES / CHUNK_SAMPLES));
             Log.i("MusicFilterBench", "Sample rate: 44100");
 
                 PerformanceTrace trace = PerformanceTrace.current();
@@ -268,10 +268,9 @@ Log.i("MusicFilterBench", "Input shape: [1, 4, " + RETAINED_BINS + ", " + FRAMES
              PcmFile.Writer writer = new PcmFile.Writer(output);
              Separator separator = new Separator(model)) {
             if (input.frames == 0) throw new IllegalArgumentException("The file contains no usable audio.");
-                        int overlap = (int)(CHUNK_SAMPLES * BenchConfig.OVERLAP_RATIO);
+            int overlap = OVERLAP_SAMPLES;
             int stride = CHUNK_SAMPLES - overlap;
-            if (stride <= 0) stride = CHUNK_SAMPLES;
-            long parts = Math.max(1, (input.frames - overlap) / stride + 1);
+            long parts = Math.max(1, (Math.max(0, input.frames - overlap) + stride - 1) / stride);
             PerformanceTrace.detail("inference_passes", parts);
             PerformanceTrace.detail("processed_model_frames", parts * CHUNK_SAMPLES);
             float[][] tail = new float[2][overlap];
@@ -317,23 +316,27 @@ try (PerformanceTrace.Scope join = PerformanceTrace.stage("chunk_overlap_add")) 
     static float maxAbs(float[][] data) { float max = 0; for (float[] row : data) for (float v : row) max = Math.max(max, Math.abs(v)); return max; }
 
     static float[][] process(File model, float[][] source, OfflineVideoProcessor.Progress progress) throws Exception {
-        requireFinite(source, "Before separation"); int length = source[0].length, hop = OVERLAP_SAMPLES;
+        requireFinite(source, "Before separation");
+        int length = source[0].length, overlap = OVERLAP_SAMPLES, stride = CHUNK_SAMPLES - overlap;
         float[][] sum = new float[2][length];
+        float[] weights = new float[length];
         if (length == 0) return sum;
-        // Match the reference's 50% chunk schedule, with one padded chunk for short audio.
-        int parts = Math.max(1, length / hop);
+        // 12.5% overlap chunk schedule, with one padded chunk for short audio.
+        int parts = Math.max(1, (Math.max(0, length - overlap) + stride - 1) / stride);
         for (int part = 0; part < parts; part++) {
-            int start = part * hop;
+            int start = part * stride;
             float[][] chunk = new float[2][CHUNK_SAMPLES]; int count = Math.min(CHUNK_SAMPLES, length - start);
             System.arraycopy(source[0], start, chunk[0], 0, count); System.arraycopy(source[1], start, chunk[1], 0, count);
             progress.report("DTTNet removing music locally — part " + (part + 1) + " of " + parts + "…"); float[][] clean = runQualityChunk(model, chunk);
             for (int i = 0; i < count; i++) {
-                double w = 1.0;
-                if (part > 0 && i < hop) w = (double)i / hop;
-                if (part < parts - 1 && i >= hop) w = (double)(CHUNK_SAMPLES - 1 - i) / hop;
-                for (int c = 0; c < CHANNELS; c++) sum[c][start+i] += (float)(clean[c][i] * w);
+                float w = 1f;
+                if (overlap > 1 && part > 0 && i < overlap) w = (float)i / (overlap - 1);
+                if (overlap > 1 && part < parts - 1 && i >= stride) w = Math.min(w, (float)(CHUNK_SAMPLES - 1 - i) / (overlap - 1));
+                for (int c = 0; c < CHANNELS; c++) sum[c][start+i] += clean[c][i] * w;
+                weights[start+i] += w;
             }
         }
+        for (int i = 0; i < length; i++) if (weights[i] > 0f) for (int c = 0; c < CHANNELS; c++) sum[c][i] /= weights[i];
         requireFinite(sum, "After chunk joining");
         return sum;
     }

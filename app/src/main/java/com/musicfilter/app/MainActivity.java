@@ -27,6 +27,8 @@ public final class MainActivity extends Activity {
     private ProgressBar progress;
     private String screen = "", lastState = "";
     private boolean ar, dark, fresh, fullscreen, preparing;
+    private volatile String modelPreparationError;
+    private Runnable pendingModelAction;
     private Button originalButton, removedButton;
     private int bg, surface, ink, muted, accent;
     private Uri exportSource;
@@ -47,8 +49,9 @@ public final class MainActivity extends Activity {
     @Override protected void onCreate(Bundle state) {
         setTheme(getSharedPreferences("interface", MODE_PRIVATE).getString("theme", "system").equals("dark") || (getSharedPreferences("interface", MODE_PRIVATE).getString("theme", "system").equals("system") && (getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK)==Configuration.UI_MODE_NIGHT_YES) ? R.style.AppThemeDark : R.style.AppTheme);
         super.onCreate(state);setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
-        if (!ProcessingState.isRunning(this)) { File p = new File(getFilesDir(), "processing"); if (p.exists()) { File[] files = p.listFiles(); if (files != null) for (File f : files) { if (f.isDirectory()) { File[] c = f.listFiles(); if (c != null) for (File child : c) child.delete(); } f.delete(); } } }
-        ar = prefs().getString("language", "en").equals("ar");
+        if (!ProcessingState.isRunning(this)) { File p = new File(getCacheDir(), "processing"); if (p.exists()) { try { clearInside(p, p.getCanonicalPath()); } catch (Exception error) { android.util.Log.w("MusicFilterCache", "Startup cleanup failed", error); } } }
+        if (!"en".equals(prefs().getString("language", "en"))) prefs().edit().putString("language", "en").apply();
+        ar = false;
         String theme = prefs().getString("theme", "system");
         dark = theme.equals("dark") || (theme.equals("system") && (getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES);
         bg = Color.parseColor(dark ? "#101C1B" : "#F6F7F2");
@@ -80,6 +83,7 @@ public final class MainActivity extends Activity {
             }
         }
         if(prefs().getBoolean("return_settings",false)){prefs().edit().remove("return_settings").apply();settings();}
+        ensureModel(false, null);
         if (!prefs().getBoolean("welcomed", false)) new AlertDialog.Builder(this).setTitle(t("Keep the voice.", "Keep the voice."))
             .setMessage(t("Remove background music from imported videos on your phone. Your imported videos stay on this device. Processing can take time, depending on your phone and video.", "Remove background music from imported videos on your phone. Your imported videos stay on this device. Processing can take time, depending on your phone and video."))
             .setPositiveButton(t("Get started", "Get started"), (d,w) -> prefs().edit().putBoolean("welcomed", true).apply()).setCancelable(false).show();
@@ -147,19 +151,29 @@ public final class MainActivity extends Activity {
         } else if (lastState.equals("RUNNING") && !running) {
             String source = s.getString("source",null); if(source != null) selectedVideo = Uri.parse(source);
             LinearLayout c = card(); label(c,t("Processing interrupted", "Processing interrupted"),24,ink); label(c,fileName(selectedVideo),14,muted);
-            label(c,t("", ""),16,dark?0xFFFFB4AB:0xFFB3261E);
+            label(c,t("The previous processing job stopped before it could finish.", "The previous processing job stopped before it could finish."),16,dark?0xFFFFB4AB:0xFFB3261E);
             c.addView(button(t("Try again", "Try again"),true,this::processVideo)); return;
         }
         if (selectedVideo == null) {
             label(body,t("Keep the voice. Remove the music.", "Keep the voice. Remove the music."),24,ink);gap(16);LinearLayout c=card();
             label(c,t("Choose a video to remove its background music while keeping speech and vocals.", "Choose a video to remove its background music while keeping speech and vocals."),16,muted);
-            c.addView(button(t("Choose video", "Choose video"),true,this::chooseVideo));
+            c.addView(button(t("Select Video", "Select Video"),true,this::chooseVideo));
             label(body,t("Private • Offline processing", "Private • Offline processing"),14,muted); return;
         }
+        playerView = new PlayerView(this);
+        FrameLayout preview = mediaPanel(playerView, this::fullScreen, false);
+        body.addView(preview, new LinearLayout.LayoutParams(-1, dp(220)));
+        gap(12);
+        label(body,fileName(selectedVideo),14,muted);
+        gap(8);
+        if (playing == null || (!playing.equals(selectedVideo) && (cleanedVideo == null || !playing.equals(cleanedVideo)))) showMedia(selectedVideo, false);
         if (cleanedVideo != null) {
             LinearLayout compare = new LinearLayout(this);compare.setPadding(dp(3),dp(3),dp(3),dp(3));compare.setBackground(shape(dark?0xFF203532:0xFFE3EBE6,16));
             originalButton=button(t("Original", "Original"),false,()->{showMedia(selectedVideo,true);markComparison();});compare.addView(originalButton,new LinearLayout.LayoutParams(0,dp(48),1));
-            removedButton=button(t("Music removed", "Music removed"),false,()->{showMedia(cleanedVideo,true);markComparison();});compare.addView(removedButton,new LinearLayout.LayoutParams(0,dp(48),1)); body.addView(compare);markComparison();
+            removedButton=button(t("Music removed", "Music removed"),false,()->{showMedia(cleanedVideo,true);markComparison();});
+            originalButton.setSingleLine(true); removedButton.setSingleLine(true); originalButton.setMinWidth(0); removedButton.setMinWidth(0);
+            originalButton.setPadding(dp(8),0,dp(8),0); removedButton.setPadding(dp(8),0,dp(8),0);
+            compare.addView(removedButton,new LinearLayout.LayoutParams(0,dp(48),1)); body.addView(compare);markComparison();
             gap(12);label(body,t("Preview ready", "Preview ready"),14,accent);gap(8);
             body.addView(button(t("Save", "Save"),true,()->saveToGallery(cleanedVideo)));
             body.addView(button(t("Share", "Share"),false,()->share(cleanedVideo,"video/mp4")));
@@ -168,7 +182,7 @@ public final class MainActivity extends Activity {
                 label(body, t("Processing could not finish. ", "Processing could not finish. ") + s.getString("message", ""), 14, dark ? 0xFFFFB4AB : 0xFFB3261E);
                 body.addView(button(t("Try again", "Try again"), true, this::processVideo));
             } else {
-                body.addView(button(t("Remove music", "Remove music"),true,this::processVideo));
+                body.addView(button(t("Remove Music", "Remove Music"),true,this::processVideo));
             }
             label(body,t("The entire video is processed locally. Longer videos can take several minutes or more.", "The entire video is processed locally. Longer videos can take several minutes or more."),13,muted);
         }
@@ -177,59 +191,49 @@ public final class MainActivity extends Activity {
     private void markComparison() {
         if(originalButton==null||removedButton==null)return;
         boolean original=selectedVideo!=null && selectedVideo.equals(playing);
-        originalButton.setText(t(original?"… Original":"Original",original?"… …":"…"));removedButton.setText(t(original?"Music removed":"… Music removed",original?" …":"…  …"));
+        originalButton.setText(t("Original","Original"));removedButton.setText(t("Music removed","Music removed"));
         originalButton.setSelected(original);removedButton.setSelected(!original);
         originalButton.setBackground(touchBackground(original?surface:Color.TRANSPARENT,12));removedButton.setBackground(touchBackground(original?Color.TRANSPARENT:surface,12));
         originalButton.setTextColor(original?ink:muted);removedButton.setTextColor(original?muted:ink);
     }
     private void showMedia(Uri uri, boolean retain) { if (uri == null || uri.equals(playing)) return; long position = retain ? player.getCurrentPosition() : 0; boolean play = retain && player.getPlayWhenReady(); playing = uri; player.setMediaItem(MediaItem.fromUri(uri)); player.prepare(); player.seekTo(position); player.setPlayWhenReady(play); }
-    private void refresh() { if (!screen.equals("home") || fullscreen) return; ProcessingState.Snapshot s = ProcessingState.read(this); boolean running = ProcessingState.isRunning(this); if (!lastState.equals(s.getString("state","")) || running != (progress != null)) { if (!running) fresh = false; home(); } else if(running) updateProgress(s); }
+    private void refresh() { if (!screen.equals("home") || fullscreen) return; ProcessingState.Snapshot s = ProcessingState.read(this); boolean running = ProcessingState.isRunning(this); if (!lastState.equals(s.getString("status","")) || running != (progress != null)) { if (!running) fresh = false; home(); } else if(running) updateProgress(s); }
     private void updateProgress(ProcessingState.Snapshot s) { int p = s.getInt("percent",0); progress.setProgress(p); progressText.setText(p+"%  "+(ar ? arabicStage(s.getString("message","")) : s.getString("message","Working"))); if(prefs().getBoolean("awake",false))getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); }
     static String arabicStage(String message) {
-        String stage=message.startsWith("Reading")?"  …… ":message.startsWith("Saving")?"  ……":message.startsWith("Removing")?"  …":message.startsWith("Done")?"…… ": " … ";
-        if(message.contains("Cancelling"))stage=" …    …";
-        java.util.regex.Matcher elapsed=java.util.regex.Pattern.compile("(\\d+)m (\\d+)s elapsed").matcher(message);
-        if(elapsed.find())stage+="\n …: "+elapsed.group(1)+" … "+elapsed.group(2)+" «…";
-        return stage;
+        return message;
     }
     private void chooseVideo() { startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT).setType("video/*").addCategory(Intent.CATEGORY_OPENABLE).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION),1); }
-    private void processVideo() { 
-        if(selectedVideo == null || preparing || ProcessingState.isRunning(this)) return; 
+    private void processVideo() {
+        if(selectedVideo == null || ProcessingState.isRunning(this)) return;
         player.pause(); 
         if(Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)!=0) requestPermissions(new String[]{android.Manifest.permission.POST_NOTIFICATIONS},4); 
         fresh=false; prefs().edit().putBoolean("fresh",false).apply(); 
         root.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY); 
-        prepareAndStart(); 
+        ensureModel(true, this::startProcessing);
     }
-    private void prepareAndStart() {
-        preparing=true; Toast.makeText(this,t("Preparing offline processing…", "Preparing offline processing…"),Toast.LENGTH_SHORT).show();
+    private void startProcessing() {
         Uri source=selectedVideo;
-        new Thread(()->{try {
-            org.json.JSONObject info = modelInfo();
-            File model=new File(getExternalFilesDir(null), info.optString("path", "missing"));
-                        if(!model.isFile() || model.length() != info.optLong("bytes")) {
-                try {
-                    model.getParentFile().mkdirs();
-                    java.io.InputStream is = getAssets().open(info.optString("path", "missing"));
-                    java.io.FileOutputStream os = new java.io.FileOutputStream(model);
-                    byte[] buffer = new byte[8192];
-                    int read;
-                    while((read = is.read(buffer)) != -1) {
-                        os.write(buffer, 0, read);
-                    }
-                    os.flush();
-                    os.close();
-                    is.close();
-                } catch (Exception e) {
-                    runOnUiThread(()->{
-                        preparing=false;
-                        problem(t("Could not prepare the offline model. Check available storage.", "Could not prepare the offline model. Check available storage."), e);
-                    });
-                    return;
-                }
+        try { Intent job = new Intent(this,MediaProcessingService.class).setData(source).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION); job.setClipData(ClipData.newRawUri("Video",source)); startForegroundService(job); handler.postDelayed(this::home,300); }
+        catch(Exception error) { problem(t("Could not start processing. Please keep this screen open and try again.", "Could not start processing. Please keep this screen open and try again."),error); }
+    }
+    private void ensureModel(boolean userInitiated, Runnable afterReady) {
+        if (OfflineModel.isReady(this)) { modelPreparationError=null; if(afterReady!=null)afterReady.run(); return; }
+        if (afterReady != null) pendingModelAction = afterReady;
+        if (preparing) { if(userInitiated)Toast.makeText(this,t("Preparing offline AI model…", "Preparing offline AI model…"),Toast.LENGTH_SHORT).show(); return; }
+        preparing=true; modelPreparationError=null;
+        if(userInitiated)Toast.makeText(this,t("Preparing offline AI model…", "Preparing offline AI model…"),Toast.LENGTH_SHORT).show();
+        new Thread(()->{
+            try {
+                OfflineModel.prepare(this, true);
+                runOnUiThread(()->{ preparing=false; modelPreparationError=null; Runnable action=pendingModelAction; pendingModelAction=null; refreshModelScreen(); if(action!=null)action.run(); });
+            } catch(Exception error) {
+                android.util.Log.e("MusicFilterModel", "Bundled model preparation failed", error);
+                runOnUiThread(()->{ preparing=false; modelPreparationError=error.getMessage(); pendingModelAction=null; refreshModelScreen(); if(userInitiated||afterReady!=null)problem(t("The offline AI model could not be prepared. Tap to retry.", "The offline AI model could not be prepared. Tap to retry."),error); });
             }
-            runOnUiThread(()->{preparing=false;try{Intent job = new Intent(this,MediaProcessingService.class).setData(source).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION); job.setClipData(ClipData.newRawUri("Video",source)); startForegroundService(job);handler.postDelayed(this::home,300);}catch(Exception e){problem(t("Could not start processing. Please keep this screen open and try again.", "Could not start processing. Please keep this screen open and try again."),e);}});
-        }catch(Exception e){preparing=false;runOnUiThread(()->problem(t("Could not prepare the offline model. Check available storage.", "Could not prepare the offline model. Check available storage."),e));}},"Model-prepare").start();
+        },"Model-prepare").start();
+    }
+    private void refreshModelScreen() {
+        if("model".equals(screen))modelPage(); else if("settings".equals(screen))settings();
     }
     private void cancel() {
         AlertDialog dialog=new AlertDialog.Builder(this).setTitle(t("Stop processing?", "Stop processing?")).setMessage(t("Current processing progress will be lost.", "Current processing progress will be lost."))
@@ -239,7 +243,7 @@ public final class MainActivity extends Activity {
     }
     private String fileName(Uri uri) { if(uri==null)return ""; try(android.database.Cursor c=getContentResolver().query(uri,new String[]{OpenableColumns.DISPLAY_NAME},null,null,null)){if(c!=null&&c.moveToFirst())return c.getString(0);}catch(Exception ignored){} return t("Selected video", "Selected video"); }
     private void speed() {
-        String[] values={"0.5","0.75","1","1.25","1.5","2"};float[] rates={.5f,.75f,1,1.25f,1.5f,2};int selected=2;
+        String[] values={"0.5×","0.75×","1×","1.25×","1.5×","2×"};float[] rates={.5f,.75f,1,1.25f,1.5f,2};int selected=2;
         for(int i=0;i<rates.length;i++)if(Math.abs(player.getPlaybackParameters().speed-rates[i])<.01)selected=i;
         choices(t("Playback speed", "Playback speed"),values,selected,i->{player.setPlaybackSpeed(rates[i]);prefs().edit().putFloat("speed",rates[i]).apply();if(screen.equals("settings"))settings();});
     }
@@ -254,7 +258,7 @@ public final class MainActivity extends Activity {
         FrameLayout.LayoutParams p=new FrameLayout.LayoutParams(-2,dp(48),Gravity.TOP|Gravity.RIGHT);p.setMargins(dp(8),dp(8),dp(8),0);frame.addView(tools,p);
         view.setControllerVisibilityListener((PlayerView.ControllerVisibilityListener)visibility->{tools.setVisibility(visibility);rate.setText(speedLabel());});return frame;
     }
-    private String speedLabel(){return String.format(Locale.US,"%s",new java.text.DecimalFormat("0.##",java.text.DecimalFormatSymbols.getInstance(Locale.US)).format(player.getPlaybackParameters().speed));}
+    private String speedLabel(){return String.format(Locale.US,"%s×",new java.text.DecimalFormat("0.##",java.text.DecimalFormatSymbols.getInstance(Locale.US)).format(player.getPlaybackParameters().speed));}
     private void fullScreen() {
         fullscreen=true;setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);playerView.setPlayer(null);
         Dialog dialog=new Dialog(this,android.R.style.Theme_Black_NoTitleBar_Fullscreen);PlayerView full=new PlayerView(this);dialog.setContentView(mediaPanel(full,dialog::dismiss,true));
@@ -268,7 +272,7 @@ public final class MainActivity extends Activity {
     }
     private void choices(String title,String[] values,int selected,java.util.function.IntConsumer action) {
         LinearLayout items=new LinearLayout(this);items.setOrientation(1);final Dialog[] sheet=new Dialog[1];
-        for(int i=0;i<values.length;i++){final int index=i;Button row=button((i==selected?"…  ":"")+values[i],false,()->{sheet[0].dismiss();action.accept(index);});row.setTextColor(ink);row.setGravity(Gravity.CENTER_VERTICAL|Gravity.START);row.setBackground(touchBackground(i==selected?(dark?0xFF203532:0xFFE9EFEB):Color.TRANSPARENT,12));row.setTextDirection(values[i].contains("")?View.TEXT_DIRECTION_LTR:View.TEXT_DIRECTION_FIRST_STRONG);row.setSelected(i==selected);items.addView(row);}
+        for(int i=0;i<values.length;i++){final int index=i;RadioButton row=new RadioButton(this);row.setText(values[i]);row.setTextSize(16);row.setTextColor(ink);row.setGravity(Gravity.CENTER_VERTICAL|Gravity.START);row.setMinHeight(dp(52));row.setPaddingRelative(dp(8),0,dp(8),0);row.setChecked(i==selected);row.setButtonTintList(new android.content.res.ColorStateList(new int[][]{new int[]{android.R.attr.state_checked},new int[]{}},new int[]{accent,muted}));row.setBackground(touchBackground(i==selected?(dark?0xFF203532:0xFFE9EFEB):Color.TRANSPARENT,12));row.setOnClickListener(v->{sheet[0].dismiss();action.accept(index);});items.addView(row,new LinearLayout.LayoutParams(-1,dp(56)));}
         sheet[0]=bottomSheet(title,items);
     }
     private void volumeSheet(){LinearLayout c=new LinearLayout(this);c.setOrientation(1);SeekBar v=new SeekBar(this);v.setMinHeight(dp(48));v.setMax(100);v.setProgress(Math.round(player.getVolume()*100));v.setContentDescription(t("Preview volume", "Preview volume"));v.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){public void onProgressChanged(SeekBar b,int p,boolean u){if(u)player.setVolume(p/100f);}public void onStartTrackingTouch(SeekBar b){}public void onStopTrackingTouch(SeekBar b){}});c.addView(v);bottomSheet(t("Volume", "Volume"),c);}
@@ -285,7 +289,7 @@ public final class MainActivity extends Activity {
                 android.content.ContentValues values = new android.content.ContentValues();
                 values.put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, finalName);
                 values.put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "video/mp4");
-                values.put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_MOVIES + "/Music Filter");
+                values.put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_MOVIES + "/MusicFilter");
                 values.put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1);
                 Uri uri = getContentResolver().insert(android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values);
                 if (uri == null) throw new java.io.IOException("Could not create the saved result.");
@@ -310,6 +314,7 @@ public final class MainActivity extends Activity {
         if(result!=RESULT_OK||data==null||data.getData()==null)return;
         Uri uri=data.getData(); 
         if(request==1){
+            deleteTemporaryResult(cleanedVideo);
             selectedVideo=uri;fresh=true;
             try{getContentResolver().takePersistableUriPermission(uri,Intent.FLAG_GRANT_READ_URI_PERMISSION);}catch(Exception ignored){}
             prefs().edit().putString("selected",uri.toString()).putBoolean("fresh",true).apply();home();
@@ -331,11 +336,19 @@ public final class MainActivity extends Activity {
             },"Music Filter-export").start();
         } 
     }
+    private void deleteTemporaryResult(Uri uri) {
+        if(uri==null || !"file".equals(uri.getScheme()))return;
+        try {
+            File file=new File(uri.getPath());File root=new File(getCacheDir(),"processing");
+            String filePath=file.getCanonicalPath(),rootPath=root.getCanonicalPath();
+            if(filePath.startsWith(rootPath+File.separator)){File parent=file.getParentFile();if(file.exists()&&!file.delete())android.util.Log.w("MusicFilterCache","Could not delete old result");if(parent!=null)parent.delete();}
+        } catch(Exception error){android.util.Log.w("MusicFilterCache","Could not clean old result",error);}
+    }
     private void previewAudio(Uri uri) {
         player.pause();ExoPlayer audio=new ExoPlayer.Builder(this).build();PlayerView view=new PlayerView(this);view.setPlayer(audio);view.setControllerShowTimeoutMs(0);view.setBackgroundColor(Color.BLACK);view.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);FrameLayout audioFrame=new FrameLayout(this);audioFrame.addView(view,new FrameLayout.LayoutParams(-1,dp(240)));audio.setMediaItem(MediaItem.fromUri(uri));audio.prepare();
         AlertDialog dialog=new AlertDialog.Builder(this).setTitle(t("Processed audio", "Processed audio")).setView(audioFrame).setPositiveButton(t("Done", "Done"),null).setNeutralButton(t("Share", "Share"),(d,w)->share(uri,"audio/mp4")).create();dialog.setOnDismissListener(d->{view.setPlayer(null);audio.release();});dialog.show();
     }
-    private void problem(String message,Exception error) { if(isFinishing()||isDestroyed())return;new AlertDialog.Builder(this).setTitle(t("Something needs attention", "Something needs attention")).setMessage(message).setPositiveButton(t("OK", "OK"),null).setNeutralButton(t("Details", "Details"),(d,w)->new AlertDialog.Builder(this).setMessage(error.getMessage()).setPositiveButton(t("Close", "Close"),null).show()).show(); }
+    private void problem(String message,Exception error) { android.util.Log.e("MusicFilterUI",message,error);if(isFinishing()||isDestroyed())return;new AlertDialog.Builder(this).setTitle(t("Something needs attention", "Something needs attention")).setMessage(message).setPositiveButton(t("OK", "OK"),null).show(); }
     private void section(String title){gap(16);TextView v=text(title,14,accent);v.setTypeface(null,Typeface.BOLD);body.addView(v);}
     private void settingRow(String title,String value,Runnable action){
         LinearLayout row=new LinearLayout(this);row.setGravity(Gravity.CENTER_VERTICAL);row.setMinimumHeight(dp(value.isEmpty()?56:72));row.setPaddingRelative(dp(4),dp(8),dp(4),dp(8));
@@ -346,67 +359,45 @@ public final class MainActivity extends Activity {
     private void settings(){
         page(t("Settings", "Settings"),"settings");section(t("General", "General"));String theme=prefs().getString("theme","system");
         settingRow(t("Theme", "Theme"),theme.equals("dark")?t("Dark", "Dark"):theme.equals("light")?t("Light", "Light"):t("System default", "System default"),()->choices(t("Theme", "Theme"),new String[]{t("System default", "System default"),t("Light", "Light"),t("Dark", "Dark")},theme.equals("dark")?2:theme.equals("light")?1:0,i->{prefs().edit().putString("theme",new String[]{"system","light","dark"}[i]).apply();recreateSettings();}));
-        settingRow(t("Language", "Language"),ar?"…":"English",()->choices(t("Language", "Language"),new String[]{"English","…"},ar?1:0,i->{prefs().edit().putString("language",i==1?"ar":"en").apply();recreateSettings();}));
+        settingRow(t("Language", "Language"),"English",()->choices(t("Language", "Language"),new String[]{"English"},0,i->{}));
         section(t("Playback", "Playback"));settingRow(t("Default playback speed", "Default playback speed"),speedLabel(),this::speed);
         LinearLayout awakeRow=new LinearLayout(this);awakeRow.setGravity(Gravity.CENTER_VERTICAL);awakeRow.setPadding(0,dp(12),0,dp(12));LinearLayout words=new LinearLayout(this);words.setOrientation(1);label(words,t("Keep screen awake", "Keep screen awake"),16,ink);label(words,t("While Music Filter is open and processing.", "While Music Filter is open and processing."),14,muted);awakeRow.addView(words,new LinearLayout.LayoutParams(0,-2,1));
         Switch awake=new Switch(this);awake.setMinHeight(dp(48));awake.setContentDescription(t("Keep screen awake while processing", "Keep screen awake while processing"));awake.setChecked(prefs().getBoolean("awake",false));awake.setOnCheckedChangeListener((v,on)->prefs().edit().putBoolean("awake",on).apply());awakeRow.addView(awake);body.addView(awakeRow);
-        section(t("Processing", "Processing"));settingRow(t("Background processing", "Background processing"),t("Enabled automatically  Battery guidance", "Enabled automatically  Battery guidance"),()->new AlertDialog.Builder(this).setTitle(t("Background processing", "Background processing")).setMessage(t("Processing runs in a foreground service. Android battery restrictions may slow or interrupt it. Review Music Filter's battery settings if needed.", "Processing runs in a foreground service. Android battery restrictions may slow or interrupt it. Review Music Filter's battery settings if needed.")).setPositiveButton(t("", ""),(d,w)->startActivity(new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:"+getPackageName())))).setNegativeButton(t("Done", "Done"),null).show());
+        section(t("Processing", "Processing"));settingRow(t("Background processing", "Background processing"),t("Continues when you leave the app; battery restrictions may slow it.", "Continues when you leave the app; battery restrictions may slow it."),()->new AlertDialog.Builder(this).setTitle(t("Background processing", "Background processing")).setMessage(t("Processing runs in a foreground service. Android battery restrictions may slow or interrupt it. Review Music Filter's battery settings if needed.", "Processing runs in a foreground service. Android battery restrictions may slow or interrupt it. Review Music Filter's battery settings if needed.")).setPositiveButton(t("Open settings", "Open settings"),(d,w)->startActivity(new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:"+getPackageName())))).setNegativeButton(t("Done", "Done"),null).show());
         settingRow(t("Notifications", "Notifications"),t("Progress and completion", "Progress and completion"),()->startActivity(new Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(android.provider.Settings.EXTRA_APP_PACKAGE,getPackageName())));
         section(t("Model", "Model"));settingRow(t("Offline AI model", "Offline AI model"),modelSummary(),this::modelPage);
-        section(t("Storage", "Storage"));settingRow(t("Save location", "Save location"),"Movies / Music Filter",()->new AlertDialog.Builder(this).setTitle(t("Save location", "Save location")).setMessage(t("Completed videos are saved to Movies / Music Filter. Save a copy lets you choose any destination supported by Android.", "Completed videos are saved to Movies / Music Filter. Save a copy lets you choose any destination supported by Android.")).setPositiveButton(t("Done", "Done"),null).show());
+        section(t("Storage", "Storage"));settingRow(t("Save location", "Save location"),"Movies/MusicFilter",()->new AlertDialog.Builder(this).setTitle(t("Save location", "Save location")).setMessage(t("Videos are saved to Movies/MusicFilter only after you tap Save.", "Videos are saved to Movies/MusicFilter only after you tap Save.")).setPositiveButton(t("Done", "Done"),null).show());
         settingRow(t("Temporary files", "Temporary files"),android.text.format.Formatter.formatShortFileSize(this,cacheSize(new File(getCacheDir(),"processing"))),this::clearTemporary);
         settingRow(t("Save processing report", "Save processing report"),t("Device information and timings only", "Device information and timings only"),()->export(null,"application/json",5,"_performance.json"));
-        section(t("", ""));settingRow(t("", ""),"",this::about);settingRow(t("Why Music Filter was created", "Why Music Filter was created"),"",this::why);settingRow(t("Privacy", "Privacy"),"",this::privacy);settingRow(t("Licences", "Licences"),"",this::licences);settingRow(t("", ""),appVersion(),null);
+        section(t("About", "About"));settingRow(t("About Music Filter", "About Music Filter"),"",this::about);settingRow(t("Why Music Filter was created", "Why Music Filter was created"),"",this::why);settingRow(t("Privacy", "Privacy"),"",this::privacy);settingRow(t("Licences", "Licences"),"",this::licences);settingRow(t("App version", "App version"),appVersion(),null);
     }
     private void recreateSettings(){prefs().edit().putBoolean("return_settings",true).apply();recreate();}
-    private org.json.JSONObject modelInfo(){try(InputStream in=getAssets().open("models/active-model.json")){ByteArrayOutputStream b=new ByteArrayOutputStream();byte[] bytes=new byte[4096];int n;while((n=in.read(bytes))!=-1)b.write(bytes,0,n);return new org.json.JSONObject(b.toString("UTF-8"));}catch(Exception e){return new org.json.JSONObject();}}
     private String modelSummary(){
-        org.json.JSONObject info=modelInfo();
-        java.io.File file=new java.io.File(getExternalFilesDir(null),info.optString("path","missing"));
-        if(file.length()==info.optLong("bytes",-1)) return info.optString("name", t("Offline AI model", "Offline AI model")) + "  " + t("Ready", "Ready");
-        return info.optString("name", t("Offline AI model", "Offline AI model")) + "  " + t("Preparing offline AI model...", "Preparing offline AI model...");
+        if(OfflineModel.isReady(this))return t("Ready", "Ready");
+        if(modelPreparationError!=null)return t("Preparation failed • Tap to retry", "Preparation failed • Tap to retry");
+        return t("Bundled • Preparing…", "Bundled • Preparing…");
     }
     private void modelPage(){
         page(t("Offline AI model", "Offline AI model"),"model");
-        org.json.JSONObject info=modelInfo();
-        java.io.File file=new java.io.File(getExternalFilesDir(null),info.optString("path","missing"));
         label(body,modelSummary(),20,ink);
-        settingRow(t("Storage used", "Storage used"),android.text.format.Formatter.formatShortFileSize(this,file.length()),null);
-        label(body,t("Included with this app. No download is needed. Model updates are delivered with app updates; there is no online update service.", "Included with this app. No download is needed. Model updates are delivered with app updates; there is no online update service."),15,muted);
-        if(file.length() != info.optLong("bytes", -1)) {
-            settingRow(t("Retry preparation", "Retry preparation"), "", () -> {
-                Toast.makeText(this, t("Preparing offline AI model...", "Preparing offline AI model..."), Toast.LENGTH_SHORT).show();
-                new Thread(()->{
-                    try {
-                        file.getParentFile().mkdirs();
-                        java.io.InputStream is = getAssets().open(info.optString("path", "missing"));
-                        java.io.FileOutputStream os = new java.io.FileOutputStream(file);
-                        byte[] buffer = new byte[8192]; int read;
-                        while((read = is.read(buffer)) != -1) os.write(buffer, 0, read);
-                        os.flush(); os.close(); is.close();
-                        runOnUiThread(this::recreateSettings);
-                    } catch(Exception e) {
-                        runOnUiThread(() -> Toast.makeText(this, "Failed", Toast.LENGTH_SHORT).show());
-                    }
-                }).start();
-            });
-        }
+        settingRow(t("Storage used", "Storage used"),android.text.format.Formatter.formatShortFileSize(this,OfflineModel.storageBytes(this)),null);
+        label(body,t("Included with this app. No download is required. Model updates are delivered with app updates.", "Included with this app. No download is required. Model updates are delivered with app updates."),15,muted);
+        if(!OfflineModel.isReady(this))settingRow(t("Retry preparation", "Retry preparation"), "", () -> ensureModel(true,null));
     }
     private long cacheSize(File f){if(f.isFile())return f.length();long size=0;File[] children=f.listFiles();if(children!=null)for(File child:children)size+=cacheSize(child);return size;}
-    private void clearTemporary(){if(ProcessingState.isRunning(this)){problem(t("Wait for processing to finish before clearing temporary files.", "Wait for processing to finish before clearing temporary files."),new IOException("Processing is active"));return;}AlertDialog d=new AlertDialog.Builder(this).setTitle(t("Clear temporary files?", "Clear temporary files?")).setMessage(t("Only leftover processing files will be removed. Your videos, saved results and model are kept.","…     … .     ." )).setNegativeButton(t("Cancel", "Cancel"),null).setPositiveButton(t("Clear", "Clear"),(dialog,w)->new Thread(()->{try{File folder=new File(getCacheDir(),"processing");clearInside(folder,folder.getCanonicalPath());runOnUiThread(this::settings);}catch(Exception e){runOnUiThread(()->problem(t("Temporary files could not be cleared.", "Temporary files could not be cleared."),e));}},"Clear-processing-cache").start()).create();d.setOnShowListener(v->d.getButton(AlertDialog.BUTTON_POSITIVE).setTextColor(dark?0xFFFFB4AB:0xFFB3261E));d.show();}
+    private void clearTemporary(){if(ProcessingState.isRunning(this)){problem(t("Wait for processing to finish before clearing temporary files.", "Wait for processing to finish before clearing temporary files."),new IOException("Processing is active"));return;}AlertDialog d=new AlertDialog.Builder(this).setTitle(t("Clear temporary files?", "Clear temporary files?")).setMessage(t("Only leftover processing files will be removed. Your videos, saved results and model are kept.","Only leftover processing files will be removed. Your videos, saved results and model are kept." )).setNegativeButton(t("Cancel", "Cancel"),null).setPositiveButton(t("Clear", "Clear"),(dialog,w)->new Thread(()->{try{File folder=new File(getCacheDir(),"processing");clearInside(folder,folder.getCanonicalPath());runOnUiThread(this::settings);}catch(Exception e){runOnUiThread(()->problem(t("Temporary files could not be cleared.", "Temporary files could not be cleared."),e));}},"Clear-processing-cache").start()).create();d.setOnShowListener(v->d.getButton(AlertDialog.BUTTON_POSITIVE).setTextColor(dark?0xFFFFB4AB:0xFFB3261E));d.show();}
     private void clearInside(File f,String rootPath)throws Exception{if(ProcessingState.isRunning(this))throw new IOException("Processing started; cleanup stopped");String path=f.getCanonicalPath();if(!path.equals(rootPath)&&!path.startsWith(rootPath+File.separator))throw new IOException("Outside processing cache");File[] children=f.listFiles();if(children!=null)for(File child:children)clearInside(child,rootPath);if(!path.equals(rootPath)&&f.exists()&&!f.delete())throw new IOException("Could not clear temporary file");}
     private String appVersion(){try{return getPackageManager().getPackageInfo(getPackageName(),0).versionName;}catch(Exception e){return "";}}
-    private void about(){page(t("", ""),"about");label(body,t("Keep the voice. Remove the music.", "Keep the voice. Remove the music."),24,accent);gap(12);label(body,t("", ""),17,ink);gap(16);settingRow(t("Why Music Filter was created", "Why Music Filter was created"),"",this::why);gap(16);label(body,t("Designed & Developed by\nEbrahim Al-Shami", "Designed & Developed by\nEbrahim Al-Shami"),16,accent);gap(16);settingRow(t("Privacy", "Privacy"),"",this::privacy);settingRow(t("Licences", "Licences"),"",this::licences);label(body,"Music Filter • "+appVersion(),13,muted);}
+    private void about(){page(t("About Music Filter", "About Music Filter"),"about");label(body,t("Keep the voice. Remove the music.", "Keep the voice. Remove the music."),24,accent);gap(12);label(body,t("Music Filter removes background music from imported videos while preserving useful speech and vocals as much as possible.", "Music Filter removes background music from imported videos while preserving useful speech and vocals as much as possible."),17,ink);gap(16);settingRow(t("Why Music Filter was created", "Why Music Filter was created"),"",this::why);gap(16);label(body,t("Designed & Developed by\nEbrahim Al-Shami", "Designed & Developed by\nEbrahim Al-Shami"),16,accent);gap(16);settingRow(t("Privacy", "Privacy"),"",this::privacy);settingRow(t("Licences", "Licences"),"",this::licences);label(body,"Music Filter • "+appVersion(),13,muted);}
     private void why(){page(t("Why Music Filter", "Why Music Filter"),"why");label(body,t("Why Music Filter was created", "Why Music Filter was created"),24,accent);
         label(body,t("Music Filter was created from a desire to make it easier to benefit from, save, and share useful videos without keeping the background music.", "Music Filter was created from a desire to make it easier to benefit from, save, and share useful videos without keeping the background music."),17,ink);gap(12);
         label(body,t("Sometimes we come across an educational, meaningful, useful, funny, or memorable video that we would like to keep or share, but it contains music in the background. Instead of leaving the entire video, Music Filter aims to remove the music while preserving the speech and useful content as much as possible.", "Sometimes we come across an educational, meaningful, useful, funny, or memorable video that we would like to keep or share, but it contains music in the background. Instead of leaving the entire video, Music Filter aims to remove the music while preserving the speech and useful content as much as possible."),17,ink);gap(12);
         label(body,t("The motivation behind this application comes from the developer's Islamic belief regarding musical instruments.\n\nThe Prophet Muhammad ﷺ said:", "The motivation behind this application comes from the developer's Islamic belief regarding musical instruments.\n\nThe Prophet Muhammad ﷺ said:"),17,ink);
-        LinearLayout quote=card();TextView hadith=text("«…  …  …  …  »",22,ink);hadith.setTextDirection(View.TEXT_DIRECTION_RTL);quote.addView(hadith);label(quote,t("Narrated by al-Bukhari.", "Narrated by al-Bukhari."),14,muted);
-        if(!ar)label(quote,"",16,muted);
+        LinearLayout quote=card();TextView hadith=text("«لَيَكُونَنَّ مِنْ أُمَّتِي أَقْوَامٌ، يَسْتَحِلُّونَ الحِرَ وَالحَرِيرَ، وَالخَمْرَ وَالمَعَازِفَ»",22,ink);hadith.setTextDirection(View.TEXT_DIRECTION_RTL);hadith.setGravity(Gravity.RIGHT);quote.addView(hadith);label(quote,t("Narrated by al-Bukhari.", "Narrated by al-Bukhari."),14,muted);
         label(body,t("Music Filter was created as a practical tool for those who wish to avoid music while continuing to benefit from useful video content.", "Music Filter was created as a practical tool for those who wish to avoid music while continuing to benefit from useful video content."),17,ink);gap(12);
         label(body,t("This application was not created for personal profit or worldly benefit. The intention behind it is to provide something beneficial for the sake of Allah سبحانه وتعالى.", "This application was not created for personal profit or worldly benefit. The intention behind it is to provide something beneficial for the sake of Allah سبحانه وتعالى."),17,ink);gap(12);label(body,t("May Allah accept it and make it beneficial.", "May Allah accept it and make it beneficial."),17,accent);
     }
     private void privacy(){page(t("Privacy", "Privacy"),"privacy");label(body,t("Your videos stay on your device.", "Your videos stay on your device."),24,accent);gap(12);label(body,t("No video is uploaded for imported-video processing. Saved videos and extracted audio remain until you remove them. Sharing uses the app you choose and its privacy policy. Diagnostic reports contain device and timing information, not your audio or video. Music Filter operates entirely offline without network access.", "No video is uploaded for imported-video processing. Saved videos and extracted audio remain until you remove them. Sharing uses the app you choose and its privacy policy. Diagnostic reports contain device and timing information, not your audio or video. Music Filter operates entirely offline without network access."),17,ink);}
-    private void licences(){page(t("Licences", "Licences"),"licences");label(body,"",16,ink);label(body,t("Open-source components used by Music Filter.", "Open-source components used by Music Filter."),15,muted);}
+    private void licences(){page(t("Licences", "Licences"),"licences");label(body,t("Music Filter uses AndroidX Media3, ONNX Runtime, and JTransforms.", "Music Filter uses AndroidX Media3, ONNX Runtime, and JTransforms."),16,ink);label(body,t("Open-source component licences are included with their respective distributions.", "Open-source component licences are included with their respective distributions."),15,muted);}
     @Override public void onBackPressed(){if(!screen.equals("home"))navigateBack();else super.onBackPressed();}
 }

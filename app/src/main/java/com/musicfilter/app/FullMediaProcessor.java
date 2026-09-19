@@ -78,7 +78,7 @@ final class FullMediaProcessor {
         try {
                         long startMs = android.os.SystemClock.elapsedRealtime();
             long audioStartUs = decode(context, source, tracks, decoded, progress);
-            File model = DttNetEngine.requireModel(modelDir);
+            File model = OfflineModel.prepare(context, false);
             PerformanceTrace.model(model);
             DttNetEngine.processFile(model, decoded, cleaned, progress);
             mux(context, source, tracks, cleaned, audioStartUs, output, progress);

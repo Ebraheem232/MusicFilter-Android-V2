@@ -125,7 +125,7 @@ public final class MediaProcessingService extends Service {
             boolean cancelled = Thread.currentThread().isInterrupted() || error instanceof InterruptedIOException;
             android.util.Log.e("Music FilterMedia", "Processing ended", error);
             completionPending = true;
-            main.post(() -> finish(cancelled ? "CANCELLED" : "FAILED", cancelled ? cancelMessage : "Could not process this file: " + detail(error), null));
+            main.post(() -> finish(cancelled ? "CANCELLED" : "FAILED", cancelled ? cancelMessage : userMessage(error), null));
         } finally {
             if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
             if (!success && output != null) { output.delete(); File parent = output.getParentFile(); if (parent != null) parent.delete(); }
@@ -203,12 +203,13 @@ public final class MediaProcessingService extends Service {
         ProcessingState.write(this, jobId, state, sourceString, message, result == null ? lastPercent : 100, result == null ? null : result.toString(), attempt);
         if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
         stopForeground(STOP_FOREGROUND_REMOVE);
+        getSystemService(NotificationManager.class).cancel(NOTIFICATION);
         if (state.equals("COMPLETED")) getSystemService(NotificationManager.class).notify(NOTIFICATION, notification(message, 100, false));
         sendBroadcast(new Intent(ACTION_STATUS).setPackage(getPackageName()));
         stopSelf();
     }
     @Override public void onTimeout(int startId, int fgsType) {
-        cancelMessage = "";
+        cancelMessage = "Processing stopped because Android's time limit was reached. Please try again with the app open.";
         if (worker != null) worker.interrupt();
         // Android requires the service to stop within seconds, even if a model chunk is finishing.
         finish("FAILED", cancelMessage, null);
@@ -226,4 +227,13 @@ public final class MediaProcessingService extends Service {
         super.onDestroy();
     }
     private static String detail(Exception error) { return error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage(); }
+    private static String userMessage(Exception error) {
+        String detail = error.getMessage() == null ? "" : error.getMessage().toLowerCase(java.util.Locale.US);
+        if (detail.contains("no audio track") || detail.contains("has no audio")) return "This video does not contain an audio track.";
+        if (detail.contains("permission denied") || detail.contains("filenotfound") || detail.contains("could not open")) return "This video could not be opened. Select it again and retry.";
+        if (detail.contains("not enough") || detail.contains("no space")) return "There is not enough storage space to process this video.";
+        if (detail.contains("model")) return "The offline AI model could not be prepared. Open Settings and tap Offline AI model to retry.";
+        if (detail.contains("decode") || detail.contains("codec")) return "This video's audio format is not supported on this phone.";
+        return "This video could not be processed. Your original file is unchanged.";
+    }
 }

@@ -1,1 +1,1 @@
-{ "name": "Mixed FP16", "path": "models/dttnet/dttnet_fp16_mixed.onnx", "bytes": 12082166 }
+{ "name": "Mixed FP16", "path": "models/dttnet/dttnet_fp16_mixed.onnx", "bytes": 12082166, "sha256": "1414E65FE7AFF5C5316C337FE9C59468DF86350CDECF4D837BCB1318159C2C19" }
