@@ -27,6 +27,7 @@ final class ProcessingState {
         AtomicFile target = file(context);
         FileOutputStream stream = null;
         try {
+            Snapshot previous = read(context);
             JSONObject data = new JSONObject();
             data.put("jobId", jobId);
             data.put("status", status); 
@@ -35,6 +36,10 @@ final class ProcessingState {
             data.put("percent", percent); 
             data.put("output", output); 
             data.put("attempt", attempt);
+            if (jobId != null && jobId.equals(previous.getString("jobId", ""))) {
+                for (String key : new String[]{"previewSource", "rangeStartUs", "rangeEndUs", "selectionStartUs", "selectionEndUs", "sample"})
+                    if (previous.data.has(key)) data.put(key, previous.data.get(key));
+            }
             data.put("updatedAt", System.currentTimeMillis());
             stream = target.startWrite(); stream.write(data.toString().getBytes(StandardCharsets.UTF_8)); target.finishWrite(stream);
         } catch (Exception error) {
@@ -55,6 +60,21 @@ final class ProcessingState {
                 || !"RUNNING".equals(current.getString("status", ""))) return false;
         write(context, jobId, status, source, message, percent, output, attempt);
         return true;
+    }
+    static synchronized void setMetadata(Context context, String jobId, String previewSource, long startUs, long endUs, long selectionStartUs, long selectionEndUs, boolean sample) {
+        AtomicFile target = file(context);
+        FileOutputStream stream = null;
+        try {
+            Snapshot current = read(context);
+            if (jobId == null || !jobId.equals(current.getString("jobId", ""))) return;
+            current.data.put("previewSource", previewSource);
+            current.data.put("rangeStartUs", startUs);
+            current.data.put("rangeEndUs", endUs);
+            current.data.put("selectionStartUs", selectionStartUs);
+            current.data.put("selectionEndUs", selectionEndUs);
+            current.data.put("sample", sample);
+            stream = target.startWrite(); stream.write(current.data.toString().getBytes(StandardCharsets.UTF_8)); target.finishWrite(stream);
+        } catch (Exception error) { if (stream != null) target.failWrite(stream); }
     }
     @SuppressWarnings("deprecation")
     static boolean isRunning(Context context) {

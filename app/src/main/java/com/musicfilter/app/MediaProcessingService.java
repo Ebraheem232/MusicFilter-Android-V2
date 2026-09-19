@@ -13,6 +13,11 @@ import java.util.UUID;
 public final class MediaProcessingService extends Service {
     static final String ACTION_STATUS = "com.musicfilter.app.PROCESSING_STATUS";
     static final String ACTION_CANCEL = "com.musicfilter.app.CANCEL_PROCESSING";
+    static final String EXTRA_START_US = "startUs";
+    static final String EXTRA_END_US = "endUs";
+    static final String EXTRA_SELECTION_START_US = "selectionStartUs";
+    static final String EXTRA_SELECTION_END_US = "selectionEndUs";
+    static final String EXTRA_SAMPLE = "sample";
     static final String PREFS = "processing";
     private static final String CHANNEL = "music_removal";
     private static final int PROCESSING_NOTIFICATION = 401;
@@ -56,6 +61,8 @@ public final class MediaProcessingService extends Service {
     }
     private String jobId;
     private int attempt = 1;
+    private long rangeStartUs = -1, rangeEndUs = -1, selectionStartUs = -1, selectionEndUs = -1;
+    private boolean sampleJob;
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent != null && ACTION_CANCEL.equals(intent.getAction())) {
@@ -68,6 +75,11 @@ public final class MediaProcessingService extends Service {
         
         Uri source = intent.getData();
         sourceString = source.toString();
+        rangeStartUs = intent.getLongExtra(EXTRA_START_US, -1);
+        rangeEndUs = intent.getLongExtra(EXTRA_END_US, -1);
+        selectionStartUs = intent.getLongExtra(EXTRA_SELECTION_START_US, -1);
+        selectionEndUs = intent.getLongExtra(EXTRA_SELECTION_END_US, -1);
+        sampleJob = intent.getBooleanExtra(EXTRA_SAMPLE, false);
         
         // Every attempt has a new identity so a late callback from an older attempt
         // cannot overwrite or complete the replacement job.
@@ -79,11 +91,13 @@ public final class MediaProcessingService extends Service {
         finishing = false; completionPending = false; cancellationRequested = false;
         jobStartedMs = SystemClock.elapsedRealtime();
         
-        ProcessingState.write(this, jobId, "RUNNING", sourceString, "Preparing the full video", 0, null, attempt);
+        String preparing = sampleJob ? "Preparing 15-second test" : rangeStartUs >= 0 ? "Preparing selected section" : "Preparing the full video";
+        ProcessingState.write(this, jobId, "RUNNING", sourceString, preparing, 0, null, attempt);
+        ProcessingState.setMetadata(this, jobId, null, rangeStartUs, rangeEndUs, selectionStartUs, selectionEndUs, sampleJob);
         int type = Build.VERSION.SDK_INT >= 35 ? ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING : ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC;
         try {
             getSystemService(NotificationManager.class).cancel(COMPLETION_NOTIFICATION);
-            startForeground(PROCESSING_NOTIFICATION, processingNotification("Preparing the full video", 0), type);
+            startForeground(PROCESSING_NOTIFICATION, processingNotification(preparing, 0), type);
             performance = new PerformanceTrace(this);
             worker = new Thread(() -> execute(source), "Music Filter-processing");
             worker.setUncaughtExceptionHandler((thread, error) -> {
@@ -100,15 +114,21 @@ public final class MediaProcessingService extends Service {
     private void execute(Uri source) {
         boolean success = false;
         try (android.database.Cursor c=getContentResolver().query(source,new String[]{android.provider.OpenableColumns.DISPLAY_NAME},null,null,null)) { if(c!=null && c.moveToFirst()) sourceDisplayName=c.getString(0); } catch(Exception ignored) {}
-        File output = null;
+        File output = null, folder = null;
         if (performance != null) { performance.attach(); performance.sample(); }
         try {
             wakeLock = getSystemService(PowerManager.class).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Music Filter:processing");
             wakeLock.acquire(6 * 60 * 60 * 1000L); // Sensible 6h limit for safety
             
-            File folder = new File(getCacheDir(), "processing/" + UUID.randomUUID());
+            folder = new File(getCacheDir(), "processing/" + UUID.randomUUID());
             output = new File(folder, "result.mp4");
-            OfflineVideoProcessor.process(this, source, getExternalFilesDir(null), output, new OfflineVideoProcessor.Progress() {
+            Uri processingSource = source;
+            if (rangeStartUs >= 0 && rangeEndUs > rangeStartUs) {
+                MediaSection.Result section = MediaSection.remux(this, source, new File(folder, "original-section.mp4"), rangeStartUs, rangeEndUs, sampleJob);
+                processingSource = Uri.fromFile(section.file);
+                ProcessingState.setMetadata(this, jobId, processingSource.toString(), section.startUs, section.endUs, selectionStartUs, selectionEndUs, sampleJob);
+            }
+            OfflineVideoProcessor.process(this, processingSource, getExternalFilesDir(null), output, new OfflineVideoProcessor.Progress() {
                 @Override public void report(String message) { update(message, lastPercent); }
                 @Override public void update(String message, int percent) { reportProgress(message, percent); }
             });
@@ -118,7 +138,7 @@ public final class MediaProcessingService extends Service {
             Uri saved = Uri.fromFile(output);
             completionPending = true;
             success = true;
-            main.post(() -> finish("COMPLETED", hasVideo ? "Your video is ready" : "Your audio is ready", saved));
+            main.post(() -> finish("COMPLETED", sampleJob ? "Your test is ready" : hasVideo ? "Your video is ready" : "Your audio is ready", saved));
         } catch (Exception error) {
             boolean cancelled = Thread.currentThread().isInterrupted() || error instanceof InterruptedIOException;
             android.util.Log.e("Music FilterMedia", "Processing ended", error);
@@ -126,12 +146,13 @@ public final class MediaProcessingService extends Service {
             main.post(() -> finish(cancelled ? "CANCELLED" : "FAILED", cancelled ? cancelMessage : userMessage(error), null));
         } finally {
             if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
-            if (!success && output != null) { output.delete(); File parent = output.getParentFile(); if (parent != null) parent.delete(); }
+            if (!success && folder != null) deleteTree(folder);
             PerformanceTrace.detach();
         }
     }
+    private static void deleteTree(File file) { File[] children=file.listFiles();if(children!=null)for(File child:children)deleteTree(child);file.delete(); }
     private synchronized void reportProgress(String message, int percent) {
-        if (Thread.currentThread().isInterrupted()) return;
+        if (!running || completionPending || Thread.currentThread().isInterrupted()) return;
         long now = SystemClock.elapsedRealtime();
         if (percent == lastPercent && now - lastUpdate < 750) return;
         lastUpdate = now; lastPercent = percent;
