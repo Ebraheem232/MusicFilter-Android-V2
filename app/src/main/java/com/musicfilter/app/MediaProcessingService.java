@@ -83,7 +83,7 @@ public final class MediaProcessingService extends Service {
         int type = Build.VERSION.SDK_INT >= 35 ? ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING : ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC;
         try {
             getSystemService(NotificationManager.class).cancel(COMPLETION_NOTIFICATION);
-            startForeground(PROCESSING_NOTIFICATION, notification("Preparing the full video", 0, true), type);
+            startForeground(PROCESSING_NOTIFICATION, processingNotification("Preparing the full video", 0), type);
             performance = new PerformanceTrace(this);
             worker = new Thread(() -> execute(source), "Music Filter-processing");
             worker.setUncaughtExceptionHandler((thread, error) -> {
@@ -137,7 +137,7 @@ public final class MediaProcessingService extends Service {
         lastUpdate = now; lastPercent = percent;
         baseMessage = message;
         if (ProcessingState.writeIfCurrent(this, jobId, "RUNNING", sourceString, message, percent, null, attempt)) {
-            getSystemService(NotificationManager.class).notify(PROCESSING_NOTIFICATION, notification(message, percent, true));
+            getSystemService(NotificationManager.class).notify(PROCESSING_NOTIFICATION, processingNotification(message, percent));
             sendBroadcast(new Intent(ACTION_STATUS).setPackage(getPackageName()));
         }
     }
@@ -147,7 +147,7 @@ public final class MediaProcessingService extends Service {
         String activity = cancellationRequested ? "Cancelling after the current audio step" : cpuDeltaMs > 0 ? "Working" : "Waiting for Android";
         String message = baseMessage.replace(" You can use other apps.", "") + "\n" + activity + "  " + seconds / 60 + "m " + seconds % 60 + "s elapsed.";
         if (ProcessingState.writeIfCurrent(this, jobId, "RUNNING", sourceString, message, lastPercent, null, attempt)) {
-            getSystemService(NotificationManager.class).notify(PROCESSING_NOTIFICATION, notification(message, lastPercent, true));
+            getSystemService(NotificationManager.class).notify(PROCESSING_NOTIFICATION, processingNotification(message, lastPercent));
             sendBroadcast(new Intent(ACTION_STATUS).setPackage(getPackageName()));
         }
     }
@@ -178,22 +178,34 @@ public final class MediaProcessingService extends Service {
     
         }
     }
-    private Notification notification(String message, int percent, boolean active) {
+    private Notification processingNotification(String message, int percent) {
         Intent open = new Intent(this, MainActivity.class).setAction("com.musicfilter.app.SHOW_RESULT").addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         PendingIntent content = PendingIntent.getActivity(this, 0, open, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         boolean arabic=getSharedPreferences("interface",MODE_PRIVATE).getString("language","en").equals("ar");
-        String display=message;
-        String title="Music Filter";
         Notification.Builder builder = new Notification.Builder(this, CHANNEL)
-                .setSmallIcon(android.R.drawable.stat_sys_download).setContentTitle(title)
-                .setSubText(sourceDisplayName).setContentText(display).setStyle(new Notification.BigTextStyle().bigText(display))
-                .setContentIntent(content).setOnlyAlertOnce(true).setOngoing(active).setAutoCancel(!active);
-        if (active) {
-            builder.setProgress(100, Math.max(0, percent), percent <= 0);
-            PendingIntent cancel = PendingIntent.getActivity(this, 1, new Intent(this, MainActivity.class).setAction("com.musicfilter.app.SHOW_CANCEL").addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP), PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-            builder.addAction(new Notification.Action.Builder(null, arabic?"":"Cancel", cancel).build());
-        }
+                .setSmallIcon(android.R.drawable.stat_sys_download).setContentTitle("Music Filter")
+                .setSubText(sourceDisplayName).setContentText(message).setStyle(new Notification.BigTextStyle().bigText(message))
+                .setContentIntent(content).setOnlyAlertOnce(true).setOngoing(true).setAutoCancel(false)
+                .setProgress(100, Math.max(0, percent), percent <= 0);
+        PendingIntent cancel = PendingIntent.getActivity(this, 1, new Intent(this, MainActivity.class).setAction("com.musicfilter.app.SHOW_CANCEL").addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP), PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        builder.addAction(new Notification.Action.Builder(null, arabic?"":"Cancel", cancel).build());
         return builder.build();
+    }
+    private Notification completionNotification() {
+        Intent open = new Intent(this, MainActivity.class).setAction("com.musicfilter.app.SHOW_RESULT").addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        PendingIntent content = PendingIntent.getActivity(this, 0, open, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        return new Notification.Builder(this, CHANNEL)
+                .setSmallIcon(R.drawable.ic_notification_done)
+                .setContentTitle("Music Filter")
+                .setSubText(sourceDisplayName)
+                .setContentText("Your video is ready")
+                .setStyle(new Notification.BigTextStyle().bigText("Your video is ready"))
+                .setContentIntent(content)
+                .setOnlyAlertOnce(true)
+                .setOngoing(false)
+                .setAutoCancel(true)
+                .setProgress(0, 0, false)
+                .build();
     }
     private void finish(String state, String message, Uri result) {
         if (finishing) return;
@@ -204,7 +216,7 @@ public final class MediaProcessingService extends Service {
         if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
         stopForeground(STOP_FOREGROUND_REMOVE);
         getSystemService(NotificationManager.class).cancel(PROCESSING_NOTIFICATION);
-        if (current && state.equals("COMPLETED")) getSystemService(NotificationManager.class).notify(COMPLETION_NOTIFICATION, notification(message, 100, false));
+        if (current && state.equals("COMPLETED")) getSystemService(NotificationManager.class).notify(COMPLETION_NOTIFICATION, completionNotification());
         if (current) sendBroadcast(new Intent(ACTION_STATUS).setPackage(getPackageName()));
         stopSelf();
     }
