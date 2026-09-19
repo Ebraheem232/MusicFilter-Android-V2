@@ -12,7 +12,7 @@ public final class FullVideoAudit extends Instrumentation {
     private String match, mode;
     @Override public void onCreate(Bundle args) { super.onCreate(args); match = args.getString("match", "Skyfall"); mode = args.getString("mode", "full"); start(); }
     private void log(String text) { Bundle b = new Bundle(); b.putString("stream", text + "\n"); sendStatus(0, b); }
-    @Override public void onStart() {
+    @Override public void onStart() { if ("lifecycle".equals(mode)) { LifecycleAudit.execute(this); return; }
         Bundle result = new Bundle();
         try {
             Context context = getTargetContext();
@@ -54,9 +54,9 @@ public final class FullVideoAudit extends Instrumentation {
             ProcessingState.Snapshot prefs;
             while (true) {
                 prefs = ProcessingState.read(context);
-                String state = prefs.getString("state", "");
-                if (!"running".equals(state)) {
-                    if (!"complete".equals(state)) throw new AssertionError(state + ": " + prefs.getString("message", ""));
+                String state = prefs.getString("status", "");
+                if (!"RUNNING".equals(state)) {
+                    if (!"COMPLETED".equals(state)) throw new AssertionError(state + ": " + prefs.getString("message", ""));
                     String output = prefs.getString("output", "");
                     FullMediaProcessor.Tracks saved = FullMediaProcessor.inspect(context, Uri.parse(output));
                     if (saved.video < 0 || Math.abs(saved.durationUs - tracks.durationUs) > 200000) throw new AssertionError("Output duration/video mismatch " + saved.durationUs);

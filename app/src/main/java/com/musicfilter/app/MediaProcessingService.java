@@ -15,7 +15,8 @@ public final class MediaProcessingService extends Service {
     static final String ACTION_CANCEL = "com.musicfilter.app.CANCEL_PROCESSING";
     static final String PREFS = "processing";
     private static final String CHANNEL = "music_removal";
-    private static final int NOTIFICATION = 401;
+    private static final int PROCESSING_NOTIFICATION = 401;
+    static final int COMPLETION_NOTIFICATION = 402;
     private volatile boolean running;
     private String sourceString;
     private volatile String sourceDisplayName;
@@ -68,15 +69,11 @@ public final class MediaProcessingService extends Service {
         Uri source = intent.getData();
         sourceString = source.toString();
         
-        // Recover state
+        // Every attempt has a new identity so a late callback from an older attempt
+        // cannot overwrite or complete the replacement job.
         ProcessingState.Snapshot state = ProcessingState.read(this);
-        if ("RUNNING".equals(state.getString("status", "")) && sourceString.equals(state.getString("source", ""))) {
-            jobId = state.getString("jobId", UUID.randomUUID().toString());
-            attempt = state.getInt("attempt", 0) + 1;
-        } else {
-            jobId = UUID.randomUUID().toString();
-            attempt = 1;
-        }
+        attempt = sourceString.equals(state.getString("source", "")) ? state.getInt("attempt", 0) + 1 : 1;
+        jobId = UUID.randomUUID().toString();
         
         running = true;
         finishing = false; completionPending = false; cancellationRequested = false;
@@ -85,7 +82,8 @@ public final class MediaProcessingService extends Service {
         ProcessingState.write(this, jobId, "RUNNING", sourceString, "Preparing the full video", 0, null, attempt);
         int type = Build.VERSION.SDK_INT >= 35 ? ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING : ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC;
         try {
-            startForeground(NOTIFICATION, notification("Preparing the full video", 0, true), type);
+            getSystemService(NotificationManager.class).cancel(COMPLETION_NOTIFICATION);
+            startForeground(PROCESSING_NOTIFICATION, notification("Preparing the full video", 0, true), type);
             performance = new PerformanceTrace(this);
             worker = new Thread(() -> execute(source), "Music Filter-processing");
             worker.setUncaughtExceptionHandler((thread, error) -> {
@@ -120,7 +118,7 @@ public final class MediaProcessingService extends Service {
             Uri saved = Uri.fromFile(output);
             completionPending = true;
             success = true;
-            main.post(() -> finish("COMPLETED", "Done. Full " + (hasVideo ? "video is ready." : "audio is ready."), saved));
+            main.post(() -> finish("COMPLETED", hasVideo ? "Your video is ready" : "Your audio is ready", saved));
         } catch (Exception error) {
             boolean cancelled = Thread.currentThread().isInterrupted() || error instanceof InterruptedIOException;
             android.util.Log.e("Music FilterMedia", "Processing ended", error);
@@ -138,18 +136,20 @@ public final class MediaProcessingService extends Service {
         if (percent == lastPercent && now - lastUpdate < 750) return;
         lastUpdate = now; lastPercent = percent;
         baseMessage = message;
-        ProcessingState.write(this, jobId, "RUNNING", sourceString, message, percent, null, attempt);
-        getSystemService(NotificationManager.class).notify(NOTIFICATION, notification(message, percent, true));
-        sendBroadcast(new Intent(ACTION_STATUS).setPackage(getPackageName()));
+        if (ProcessingState.writeIfCurrent(this, jobId, "RUNNING", sourceString, message, percent, null, attempt)) {
+            getSystemService(NotificationManager.class).notify(PROCESSING_NOTIFICATION, notification(message, percent, true));
+            sendBroadcast(new Intent(ACTION_STATUS).setPackage(getPackageName()));
+        }
     }
     private synchronized void refreshActivityStatus(long cpuDeltaMs) {
         if (!running || completionPending) return;
         long seconds = Math.max(0, (SystemClock.elapsedRealtime() - jobStartedMs) / 1000);
         String activity = cancellationRequested ? "Cancelling after the current audio step" : cpuDeltaMs > 0 ? "Working" : "Waiting for Android";
         String message = baseMessage.replace(" You can use other apps.", "") + "\n" + activity + "  " + seconds / 60 + "m " + seconds % 60 + "s elapsed.";
-        ProcessingState.write(this, jobId, "RUNNING", sourceString, message, lastPercent, null, attempt);
-        getSystemService(NotificationManager.class).notify(NOTIFICATION, notification(message, lastPercent, true));
-        sendBroadcast(new Intent(ACTION_STATUS).setPackage(getPackageName()));
+        if (ProcessingState.writeIfCurrent(this, jobId, "RUNNING", sourceString, message, lastPercent, null, attempt)) {
+            getSystemService(NotificationManager.class).notify(PROCESSING_NOTIFICATION, notification(message, lastPercent, true));
+            sendBroadcast(new Intent(ACTION_STATUS).setPackage(getPackageName()));
+        }
     }
     private Uri publish(File output, boolean video) throws Exception {
         try (PerformanceTrace.Scope measured = PerformanceTrace.stage("publish_output_file")) {
@@ -200,12 +200,12 @@ public final class MediaProcessingService extends Service {
         finishing = true; running = false;
         if (performance != null) performance.finish(state);
         main.removeCallbacks(heartbeat);
-        ProcessingState.write(this, jobId, state, sourceString, message, result == null ? lastPercent : 100, result == null ? null : result.toString(), attempt);
+        boolean current = ProcessingState.writeIfCurrent(this, jobId, state, sourceString, message, result == null ? lastPercent : 100, result == null ? null : result.toString(), attempt);
         if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
         stopForeground(STOP_FOREGROUND_REMOVE);
-        getSystemService(NotificationManager.class).cancel(NOTIFICATION);
-        if (state.equals("COMPLETED")) getSystemService(NotificationManager.class).notify(NOTIFICATION, notification(message, 100, false));
-        sendBroadcast(new Intent(ACTION_STATUS).setPackage(getPackageName()));
+        getSystemService(NotificationManager.class).cancel(PROCESSING_NOTIFICATION);
+        if (current && state.equals("COMPLETED")) getSystemService(NotificationManager.class).notify(COMPLETION_NOTIFICATION, notification(message, 100, false));
+        if (current) sendBroadcast(new Intent(ACTION_STATUS).setPackage(getPackageName()));
         stopSelf();
     }
     @Override public void onTimeout(int startId, int fgsType) {
@@ -221,8 +221,8 @@ public final class MediaProcessingService extends Service {
         running = false;
         if (!finishing) {
             if (performance != null) performance.finish("interrupted");
-            ProcessingState.write(this, jobId, "INTERRUPTED", sourceString, "Processing was interrupted. Please try again.", lastPercent, null, attempt);
-            getSystemService(NotificationManager.class).cancel(NOTIFICATION);
+            ProcessingState.writeIfCurrent(this, jobId, "INTERRUPTED", sourceString, "Processing was interrupted. Please try again.", lastPercent, null, attempt);
+            getSystemService(NotificationManager.class).cancel(PROCESSING_NOTIFICATION);
         }
         super.onDestroy();
     }

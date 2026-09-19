@@ -26,7 +26,7 @@ public final class MainActivity extends Activity {
     private TextView progressText;
     private ProgressBar progress;
     private String screen = "", lastState = "";
-    private boolean ar, dark, fresh, fullscreen, preparing;
+    private boolean ar, dark, fresh, fullscreen, preparing, checkingInput, preparingShared;
     private volatile String modelPreparationError;
     private Runnable pendingModelAction;
     private Button originalButton, removedButton;
@@ -49,7 +49,18 @@ public final class MainActivity extends Activity {
     @Override protected void onCreate(Bundle state) {
         setTheme(getSharedPreferences("interface", MODE_PRIVATE).getString("theme", "system").equals("dark") || (getSharedPreferences("interface", MODE_PRIVATE).getString("theme", "system").equals("system") && (getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK)==Configuration.UI_MODE_NIGHT_YES) ? R.style.AppThemeDark : R.style.AppTheme);
         super.onCreate(state);setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
-        if (!ProcessingState.isRunning(this)) { File p = new File(getCacheDir(), "processing"); if (p.exists()) { try { clearInside(p, p.getCanonicalPath()); } catch (Exception error) { android.util.Log.w("MusicFilterCache", "Startup cleanup failed", error); } } }
+        boolean normalFreshLaunch = state == null && getIntent() != null
+                && Intent.ACTION_MAIN.equals(getIntent().getAction()) && !ProcessingState.isRunning(this);
+        if (normalFreshLaunch) {
+            ProcessingState.Snapshot old = ProcessingState.read(this);
+            deleteTemporaryFile(parseUri(old.getString("output", null)), "processing");
+            deleteTemporaryFile(parseUri(old.getString("source", null)), "imports");
+            ProcessingState.clearInactive(this);
+            getSystemService(NotificationManager.class).cancel(MediaProcessingService.COMPLETION_NOTIFICATION);
+            prefs().edit().remove("selected").putBoolean("fresh", true).commit();
+        }
+        // Keep a completed temporary result across Activity recreation/reopen.
+        // It is discarded only after a successful replacement selection.
         if (!"en".equals(prefs().getString("language", "en"))) prefs().edit().putString("language", "en").apply();
         ar = false;
         String theme = prefs().getString("theme", "system");
@@ -69,7 +80,10 @@ public final class MainActivity extends Activity {
         player = new ExoPlayer.Builder(this).build();
         player.setPlaybackSpeed(prefs().getFloat("speed", 1f));
         player.addListener(new Player.Listener() { public void onPlayerError(PlaybackException error) { problem(t("This preview cannot be played. Try another video or open the saved file in another player.", "This preview cannot be played. Try another video or open the saved file in another player."), error); } });
-        if(state!=null && state.getString("playing")!=null){showMedia(Uri.parse(state.getString("playing")),false);player.seekTo(state.getLong("position",0));}restoreNotification(getIntent()); home();
+        if(state!=null && state.getString("playing")!=null){showMedia(Uri.parse(state.getString("playing")),false);player.seekTo(state.getLong("position",0));}
+        restoreNotification(getIntent());
+        handleIncomingIntent(getIntent());
+        home();
         if (false) {
             android.util.Log.i("Music FilterBench", "");
             try {
@@ -95,7 +109,58 @@ public final class MainActivity extends Activity {
             if(intent.getAction().endsWith("CANCEL"))handler.postDelayed(()->{if(ProcessingState.isRunning(this))cancel();},400);
         }
     }
-    @Override protected void onNewIntent(Intent intent) {super.onNewIntent(intent);setIntent(intent);restoreNotification(intent);home();}
+    private Uri parseUri(String value){return value==null||value.isEmpty()||"null".equals(value)?null:Uri.parse(value);}
+    @Override protected void onNewIntent(Intent intent) {super.onNewIntent(intent);setIntent(intent);restoreNotification(intent);handleIncomingIntent(intent);home();}
+    private boolean handleIncomingIntent(Intent intent) {
+        if (intent == null || !Intent.ACTION_SEND.equals(intent.getAction())) return false;
+        intent.setAction(null); // A configuration change must not import the same share twice.
+        Uri shared = intent.getParcelableExtra(Intent.EXTRA_STREAM);
+        String mime = intent.getType();
+        if (shared == null || (mime != null && !mime.startsWith("video/"))) {
+            handler.post(() -> problem(t("Only shared video files can be opened here.", "Only shared video files can be opened here."), new IOException("Invalid shared item")));
+            return true;
+        }
+        if (ProcessingState.isRunning(this)) {
+            handler.post(() -> new AlertDialog.Builder(this).setTitle(t("Processing is still running", "Processing is still running"))
+                    .setMessage(t("The shared video was not selected because the current video is still being processed.", "The shared video was not selected because the current video is still being processed."))
+                    .setPositiveButton(t("OK", "OK"), null).show());
+            return true;
+        }
+        retainSharedVideo(shared);
+        return true;
+    }
+    private void retainSharedVideo(Uri shared) {
+        if (preparingShared) return;
+        preparingShared = true;
+        Toast.makeText(this, t("Preparing shared video…", "Preparing shared video…"), Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            File folder = new File(getCacheDir(), "imports/" + java.util.UUID.randomUUID());
+            File retained = null;
+            try {
+                if (!folder.mkdirs()) throw new IOException("Could not create import folder");
+                String original = fileName(shared);
+                String extension = original.lastIndexOf('.') >= 0 ? original.substring(original.lastIndexOf('.')).replaceAll("[^A-Za-z0-9.]", "") : ".mp4";
+                if (extension.length() < 2 || extension.length() > 10) extension = ".mp4";
+                retained = new File(folder, safeStem(original) + extension);
+                try (InputStream in = getContentResolver().openInputStream(shared); OutputStream out = new BufferedOutputStream(new FileOutputStream(retained))) {
+                    if (in == null) throw new IOException("Shared video could not be opened");
+                    byte[] buffer = new byte[64 * 1024]; int count;
+                    while ((count = in.read(buffer)) != -1) out.write(buffer, 0, count);
+                }
+                if (retained.length() == 0) throw new IOException("Shared video is empty");
+                File ready = retained;
+                runOnUiThread(() -> {
+                    preparingShared = false;
+                    if (ProcessingState.isRunning(this)) { deleteTemporaryFile(Uri.fromFile(ready), "imports"); home(); return; }
+                    acceptSelectedVideo(Uri.fromFile(ready), 0);
+                });
+            } catch (Exception error) {
+                if (retained != null) deleteTemporaryFile(Uri.fromFile(retained), "imports");
+                else if (folder.exists()) folder.delete();
+                runOnUiThread(() -> { preparingShared = false; problem(t("The shared video could not be opened. Try sharing it again.", "The shared video could not be opened. Try sharing it again."), error); });
+            }
+        }, "Shared-video-import").start();
+    }
     @Override protected void onSaveInstanceState(Bundle b) { if (selectedVideo != null) b.putString("selected", selectedVideo.toString()); b.putBoolean("fresh", fresh); if(exportSource!=null)b.putString("export",exportSource.toString());if(playing!=null)b.putString("playing",playing.toString());b.putLong("position",player.getCurrentPosition()); super.onSaveInstanceState(b); }
     @Override protected void onResume() { super.onResume(); androidx.core.content.ContextCompat.registerReceiver(this, receiver, new IntentFilter(MediaProcessingService.ACTION_STATUS), androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED); refresh(); }
     @Override protected void onPause() { unregisterReceiver(receiver); player.pause(); getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); super.onPause(); }
@@ -139,8 +204,15 @@ public final class MainActivity extends Activity {
         ProcessingState.Snapshot s = ProcessingState.read(this);
         boolean running = ProcessingState.isRunning(this);
         lastState = s.getString("status", "");
+        boolean belongsToSelection = !fresh && selectedVideo != null
+                && selectedVideo.toString().equals(s.getString("source", ""));
         String output = s.getString("output",null);
-        cleanedVideo = !fresh && output != null && !output.equals("null") ? Uri.parse(output) : null;
+        cleanedVideo = belongsToSelection && output != null && !output.equals("null") ? Uri.parse(output) : null;
+        if (cleanedVideo != null && !isReadable(cleanedVideo)) {
+            ProcessingState.clearInactive(this);
+            cleanedVideo = null; fresh = true; lastState = ""; belongsToSelection = false;
+            prefs().edit().putBoolean("fresh", true).apply();
+        }
         if (running) {
             String source = s.getString("source",null); if(source != null) selectedVideo = Uri.parse(source);
             LinearLayout c = card(); label(c,t("Removing music", "Removing music"),24,ink); label(c,fileName(selectedVideo),14,muted);
@@ -148,11 +220,12 @@ public final class MainActivity extends Activity {
             progressText = text("",16,ink);progressText.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE); c.addView(progressText);
             label(c,t("You can leave this screen. Android battery restrictions may slow background processing.", "You can leave this screen. Android battery restrictions may slow background processing."),14,muted);
             c.addView(button(t("Cancel", "Cancel"),true,this::cancel)); updateProgress(s); return;
-        } else if (lastState.equals("RUNNING") && !running) {
+        } else if (belongsToSelection && lastState.equals("RUNNING") && !running) {
             String source = s.getString("source",null); if(source != null) selectedVideo = Uri.parse(source);
             LinearLayout c = card(); label(c,t("Processing interrupted", "Processing interrupted"),24,ink); label(c,fileName(selectedVideo),14,muted);
             label(c,t("The previous processing job stopped before it could finish.", "The previous processing job stopped before it could finish."),16,dark?0xFFFFB4AB:0xFFB3261E);
-            c.addView(button(t("Try again", "Try again"),true,this::processVideo)); return;
+            c.addView(button(t("Try again", "Try again"),true,()->retryJob(s)));
+            c.addView(button(t("Choose another video", "Choose another video"),false,this::chooseVideo)); return;
         }
         if (selectedVideo == null) {
             label(body,t("Keep the voice. Remove the music.", "Keep the voice. Remove the music."),24,ink);gap(16);LinearLayout c=card();
@@ -164,7 +237,7 @@ public final class MainActivity extends Activity {
         FrameLayout preview = mediaPanel(playerView, this::fullScreen, false);
         body.addView(preview, new LinearLayout.LayoutParams(-1, dp(220)));
         gap(12);
-        label(body,fileName(selectedVideo),14,muted);
+        label(body,videoDetails(selectedVideo),14,muted);
         gap(8);
         if (playing == null || (!playing.equals(selectedVideo) && (cleanedVideo == null || !playing.equals(cleanedVideo)))) showMedia(selectedVideo, false);
         if (cleanedVideo != null) {
@@ -178,9 +251,9 @@ public final class MainActivity extends Activity {
             body.addView(button(t("Save", "Save"),true,()->saveToGallery(cleanedVideo)));
             body.addView(button(t("Share", "Share"),false,()->share(cleanedVideo,"video/mp4")));
         } else {
-            if (lastState.equals("FAILED") || lastState.equals("CANCELLED") || lastState.equals("INTERRUPTED")) {
+            if (belongsToSelection && (lastState.equals("FAILED") || lastState.equals("CANCELLED") || lastState.equals("INTERRUPTED"))) {
                 label(body, t("Processing could not finish. ", "Processing could not finish. ") + s.getString("message", ""), 14, dark ? 0xFFFFB4AB : 0xFFB3261E);
-                body.addView(button(t("Try again", "Try again"), true, this::processVideo));
+                body.addView(button(t("Try again", "Try again"), true, ()->retryJob(s)));
             } else {
                 body.addView(button(t("Remove Music", "Remove Music"),true,this::processVideo));
             }
@@ -197,22 +270,49 @@ public final class MainActivity extends Activity {
         originalButton.setTextColor(original?ink:muted);removedButton.setTextColor(original?muted:ink);
     }
     private void showMedia(Uri uri, boolean retain) { if (uri == null || uri.equals(playing)) return; long position = retain ? player.getCurrentPosition() : 0; boolean play = retain && player.getPlayWhenReady(); playing = uri; player.setMediaItem(MediaItem.fromUri(uri)); player.prepare(); player.seekTo(position); player.setPlayWhenReady(play); }
-    private void refresh() { if (!screen.equals("home") || fullscreen) return; ProcessingState.Snapshot s = ProcessingState.read(this); boolean running = ProcessingState.isRunning(this); if (!lastState.equals(s.getString("status","")) || running != (progress != null)) { if (!running) fresh = false; home(); } else if(running) updateProgress(s); }
+    private void refresh() { if (!screen.equals("home") || fullscreen) return; ProcessingState.Snapshot s = ProcessingState.read(this); boolean running = ProcessingState.isRunning(this); if (!lastState.equals(s.getString("status","")) || running != (progress != null)) { if (running) fresh = false; home(); } else if(running) updateProgress(s); }
     private void updateProgress(ProcessingState.Snapshot s) { int p = s.getInt("percent",0); progress.setProgress(p); progressText.setText(p+"%  "+(ar ? arabicStage(s.getString("message","")) : s.getString("message","Working"))); if(prefs().getBoolean("awake",false))getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); }
     static String arabicStage(String message) {
         return message;
     }
     private void chooseVideo() { startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT).setType("video/*").addCategory(Intent.CATEGORY_OPENABLE).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION),1); }
     private void processVideo() {
-        if(selectedVideo == null || ProcessingState.isRunning(this)) return;
+        if(selectedVideo == null || ProcessingState.isRunning(this) || checkingInput || preparingShared) return;
         player.pause(); 
         if(Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)!=0) requestPermissions(new String[]{android.Manifest.permission.POST_NOTIFICATIONS},4); 
-        fresh=false; prefs().edit().putBoolean("fresh",false).apply(); 
         root.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY); 
-        ensureModel(true, this::startProcessing);
+        final Uri input = selectedVideo;
+        checkingInput = true;
+        Toast.makeText(this,t("Checking video…", "Checking video…"),Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            try {
+                FullMediaProcessor.Tracks tracks = FullMediaProcessor.inspect(this, input);
+                if (tracks.video < 0 || tracks.durationUs <= 0) throw new IOException("Invalid video duration");
+                runOnUiThread(() -> {
+                    checkingInput = false;
+                    if (!input.equals(selectedVideo) || ProcessingState.isRunning(this)) return;
+                    fresh=false; prefs().edit().putBoolean("fresh",false).apply();
+                    ensureModel(true, ()->{ if(input.equals(selectedVideo)) startProcessing(input); });
+                });
+            } catch (Exception error) {
+                runOnUiThread(() -> { checkingInput = false; problem(inputProblem(error), error); });
+            }
+        }, "Video-preflight").start();
     }
-    private void startProcessing() {
-        Uri source=selectedVideo;
+    private void retryJob(ProcessingState.Snapshot failed) {
+        ProcessingState.Snapshot current = ProcessingState.read(this);
+        String input = failed.getString("source", "");
+        String status = current.getString("status", "");
+        if (ProcessingState.isRunning(this) || fresh || input.isEmpty()
+                || !failed.getString("jobId", "").equals(current.getString("jobId", ""))
+                || !input.equals(current.getString("source", ""))
+                || !(status.equals("FAILED") || status.equals("CANCELLED") || status.equals("INTERRUPTED") || status.equals("RUNNING"))) return;
+        selectedVideo = Uri.parse(input);
+        prefs().edit().putString("selected", input).apply();
+        processVideo();
+    }
+    private void startProcessing(Uri source) {
+        if (ProcessingState.isRunning(this) || !source.equals(selectedVideo)) return;
         try { Intent job = new Intent(this,MediaProcessingService.class).setData(source).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION); job.setClipData(ClipData.newRawUri("Video",source)); startForegroundService(job); handler.postDelayed(this::home,300); }
         catch(Exception error) { problem(t("Could not start processing. Please keep this screen open and try again.", "Could not start processing. Please keep this screen open and try again."),error); }
     }
@@ -241,7 +341,28 @@ public final class MainActivity extends Activity {
             .setPositiveButton(t("Stop", "Stop"),(d,w)->{root.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);startService(new Intent(this,MediaProcessingService.class).setAction(MediaProcessingService.ACTION_CANCEL));}).create();
         dialog.setOnShowListener(d->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setTextColor(dark?0xFFFFB4AB:0xFFB3261E));dialog.show();
     }
-    private String fileName(Uri uri) { if(uri==null)return ""; try(android.database.Cursor c=getContentResolver().query(uri,new String[]{OpenableColumns.DISPLAY_NAME},null,null,null)){if(c!=null&&c.moveToFirst())return c.getString(0);}catch(Exception ignored){} return t("Selected video", "Selected video"); }
+    private String fileName(Uri uri) {
+        if(uri==null)return "";
+        if ("file".equals(uri.getScheme()) && uri.getPath() != null) return new File(uri.getPath()).getName();
+        try(android.database.Cursor c=getContentResolver().query(uri,new String[]{OpenableColumns.DISPLAY_NAME},null,null,null)){if(c!=null&&c.moveToFirst())return c.getString(0);}catch(Exception ignored){}
+        return t("Selected video", "Selected video");
+    }
+    private String videoDetails(Uri uri) {
+        String name=fileName(uri);long size=-1,duration=-1;
+        try {
+            if("file".equals(uri.getScheme()))size=new File(uri.getPath()).length();
+            else try(android.database.Cursor c=getContentResolver().query(uri,new String[]{OpenableColumns.SIZE},null,null,null)){if(c!=null&&c.moveToFirst()&&!c.isNull(0))size=c.getLong(0);}
+        } catch(Exception ignored){}
+        android.media.MediaMetadataRetriever metadata=new android.media.MediaMetadataRetriever();
+        try { metadata.setDataSource(this,uri);String value=metadata.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION);if(value!=null)duration=Long.parseLong(value); } catch(Exception ignored){} finally {try{metadata.release();}catch(Exception ignored){}}
+        StringBuilder details=new StringBuilder(name);
+        if(duration>=0)details.append("  •  ").append(formatDuration(duration));
+        if(size>=0)details.append("  •  ").append(android.text.format.Formatter.formatShortFileSize(this,size));
+        return details.toString();
+    }
+    private String formatDuration(long ms){long seconds=Math.max(0,ms/1000);return String.format(Locale.US,"%d:%02d",seconds/60,seconds%60);}
+    private boolean isReadable(Uri uri){if(uri==null)return false;if("file".equals(uri.getScheme()))return uri.getPath()!=null&&new File(uri.getPath()).isFile();try(InputStream in=getContentResolver().openInputStream(uri)){return in!=null;}catch(Exception ignored){return false;}}
+    private String inputProblem(Exception error){String value=error.getMessage()==null?"":error.getMessage().toLowerCase(Locale.US);if(value.contains("no audio"))return t("This video does not contain an audio track.", "This video does not contain an audio track.");if(value.contains("not a video")||value.contains("duration")||value.contains("empty"))return t("This is not a valid playable video.", "This is not a valid playable video.");if(value.contains("decode")||value.contains("codec"))return t("This video's audio or video format is not supported on this phone.", "This video's audio or video format is not supported on this phone.");return t("This video could not be opened. Select it again and retry.", "This video could not be opened. Select it again and retry.");}
     private void speed() {
         String[] values={"0.5×","0.75×","1×","1.25×","1.5×","2×"};float[] rates={.5f,.75f,1,1.25f,1.5f,2};int selected=2;
         for(int i=0;i<rates.length;i++)if(Math.abs(player.getPlaybackParameters().speed-rates[i])<.01)selected=i;
@@ -282,10 +403,7 @@ public final class MainActivity extends Activity {
     private void saveToGallery(Uri source) {
         new Thread(()->{
             try {
-                String originalName = fileName(selectedVideo);
-                int dot = originalName.lastIndexOf('.');
-                if (dot > 0) originalName = originalName.substring(0, dot);
-                String finalName = "MusicFilter_" + originalName + ".mp4";
+                String finalName = safeStem(fileName(selectedVideo)) + "_music_removed.mp4";
                 android.content.ContentValues values = new android.content.ContentValues();
                 values.put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, finalName);
                 values.put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "video/mp4");
@@ -314,10 +432,7 @@ public final class MainActivity extends Activity {
         if(result!=RESULT_OK||data==null||data.getData()==null)return;
         Uri uri=data.getData(); 
         if(request==1){
-            deleteTemporaryResult(cleanedVideo);
-            selectedVideo=uri;fresh=true;
-            try{getContentResolver().takePersistableUriPermission(uri,Intent.FLAG_GRANT_READ_URI_PERMISSION);}catch(Exception ignored){}
-            prefs().edit().putString("selected",uri.toString()).putBoolean("fresh",true).apply();home();
+            acceptSelectedVideo(uri, data.getFlags());
         }else if(request==2||request==3||request==5){ 
             final Uri source=exportSource; 
             new Thread(()->{
@@ -336,14 +451,28 @@ public final class MainActivity extends Activity {
             },"Music Filter-export").start();
         } 
     }
-    private void deleteTemporaryResult(Uri uri) {
+    private void acceptSelectedVideo(Uri uri, int grantFlags) {
+        if (uri == null || !ProcessingState.clearInactive(this)) { home(); return; }
+        Uri oldResult=cleanedVideo,oldSelection=selectedVideo;
+        pendingModelAction=null;checkingInput=false;
+        player.stop();player.clearMediaItems();playing=null;
+        cleanedVideo=null;exportSource=null;lastState="";
+        originalButton=null;removedButton=null;progress=null;progressText=null;
+        deleteTemporaryFile(oldResult,"processing");
+        if(oldSelection==null||!oldSelection.equals(uri))deleteTemporaryFile(oldSelection,"imports");
+        selectedVideo=uri;fresh=true;
+        if((grantFlags&Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)!=0)try{getContentResolver().takePersistableUriPermission(uri,Intent.FLAG_GRANT_READ_URI_PERMISSION);}catch(Exception ignored){}
+        prefs().edit().putString("selected",uri.toString()).putBoolean("fresh",true).apply();home();
+    }
+    private void deleteTemporaryFile(Uri uri,String area) {
         if(uri==null || !"file".equals(uri.getScheme()))return;
         try {
-            File file=new File(uri.getPath());File root=new File(getCacheDir(),"processing");
+            File file=new File(uri.getPath());File root=new File(getCacheDir(),area);
             String filePath=file.getCanonicalPath(),rootPath=root.getCanonicalPath();
-            if(filePath.startsWith(rootPath+File.separator)){File parent=file.getParentFile();if(file.exists()&&!file.delete())android.util.Log.w("MusicFilterCache","Could not delete old result");if(parent!=null)parent.delete();}
+            if(filePath.startsWith(rootPath+File.separator)){File parent=file.getParentFile();if(file.exists()&&!file.delete())android.util.Log.w("MusicFilterCache","Could not delete old temporary file");if(parent!=null)parent.delete();}
         } catch(Exception error){android.util.Log.w("MusicFilterCache","Could not clean old result",error);}
     }
+    private String safeStem(String name){int dot=name.lastIndexOf('.');if(dot>0)name=name.substring(0,dot);name=name.replaceAll("[\\\\/:*?\"<>|\\p{Cntrl}]","_").replaceAll("[ .]+$","").trim();if(name.isEmpty())name="video";return name.length()>80?name.substring(0,80):name;}
     private void previewAudio(Uri uri) {
         player.pause();ExoPlayer audio=new ExoPlayer.Builder(this).build();PlayerView view=new PlayerView(this);view.setPlayer(audio);view.setControllerShowTimeoutMs(0);view.setBackgroundColor(Color.BLACK);view.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);FrameLayout audioFrame=new FrameLayout(this);audioFrame.addView(view,new FrameLayout.LayoutParams(-1,dp(240)));audio.setMediaItem(MediaItem.fromUri(uri));audio.prepare();
         AlertDialog dialog=new AlertDialog.Builder(this).setTitle(t("Processed audio", "Processed audio")).setView(audioFrame).setPositiveButton(t("Done", "Done"),null).setNeutralButton(t("Share", "Share"),(d,w)->share(uri,"audio/mp4")).create();dialog.setOnDismissListener(d->{view.setPlayer(null);audio.release();});dialog.show();
@@ -367,7 +496,9 @@ public final class MainActivity extends Activity {
         settingRow(t("Notifications", "Notifications"),t("Progress and completion", "Progress and completion"),()->startActivity(new Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(android.provider.Settings.EXTRA_APP_PACKAGE,getPackageName())));
         section(t("Model", "Model"));settingRow(t("Offline AI model", "Offline AI model"),modelSummary(),this::modelPage);
         section(t("Storage", "Storage"));settingRow(t("Save location", "Save location"),"Movies/MusicFilter",()->new AlertDialog.Builder(this).setTitle(t("Save location", "Save location")).setMessage(t("Videos are saved to Movies/MusicFilter only after you tap Save.", "Videos are saved to Movies/MusicFilter only after you tap Save.")).setPositiveButton(t("Done", "Done"),null).show());
-        settingRow(t("Temporary files", "Temporary files"),android.text.format.Formatter.formatShortFileSize(this,cacheSize(new File(getCacheDir(),"processing"))),this::clearTemporary);
+        long temporaryBytes=cacheSize(new File(getCacheDir(),"processing"))+cacheSize(new File(getCacheDir(),"imports"));
+        settingRow(t("Temporary files", "Temporary files"),android.text.format.Formatter.formatShortFileSize(this,temporaryBytes),null);
+        settingRow(t("Clear temporary files", "Clear temporary files"),t("Keeps the current preview and selected video", "Keeps the current preview and selected video"),this::clearTemporary);
         settingRow(t("Save processing report", "Save processing report"),t("Device information and timings only", "Device information and timings only"),()->export(null,"application/json",5,"_performance.json"));
         section(t("About", "About"));settingRow(t("About Music Filter", "About Music Filter"),"",this::about);settingRow(t("Why Music Filter was created", "Why Music Filter was created"),"",this::why);settingRow(t("Privacy", "Privacy"),"",this::privacy);settingRow(t("Licences", "Licences"),"",this::licences);settingRow(t("App version", "App version"),appVersion(),null);
     }
@@ -385,8 +516,9 @@ public final class MainActivity extends Activity {
         if(!OfflineModel.isReady(this))settingRow(t("Retry preparation", "Retry preparation"), "", () -> ensureModel(true,null));
     }
     private long cacheSize(File f){if(f.isFile())return f.length();long size=0;File[] children=f.listFiles();if(children!=null)for(File child:children)size+=cacheSize(child);return size;}
-    private void clearTemporary(){if(ProcessingState.isRunning(this)){problem(t("Wait for processing to finish before clearing temporary files.", "Wait for processing to finish before clearing temporary files."),new IOException("Processing is active"));return;}AlertDialog d=new AlertDialog.Builder(this).setTitle(t("Clear temporary files?", "Clear temporary files?")).setMessage(t("Only leftover processing files will be removed. Your videos, saved results and model are kept.","Only leftover processing files will be removed. Your videos, saved results and model are kept." )).setNegativeButton(t("Cancel", "Cancel"),null).setPositiveButton(t("Clear", "Clear"),(dialog,w)->new Thread(()->{try{File folder=new File(getCacheDir(),"processing");clearInside(folder,folder.getCanonicalPath());runOnUiThread(this::settings);}catch(Exception e){runOnUiThread(()->problem(t("Temporary files could not be cleared.", "Temporary files could not be cleared."),e));}},"Clear-processing-cache").start()).create();d.setOnShowListener(v->d.getButton(AlertDialog.BUTTON_POSITIVE).setTextColor(dark?0xFFFFB4AB:0xFFB3261E));d.show();}
-    private void clearInside(File f,String rootPath)throws Exception{if(ProcessingState.isRunning(this))throw new IOException("Processing started; cleanup stopped");String path=f.getCanonicalPath();if(!path.equals(rootPath)&&!path.startsWith(rootPath+File.separator))throw new IOException("Outside processing cache");File[] children=f.listFiles();if(children!=null)for(File child:children)clearInside(child,rootPath);if(!path.equals(rootPath)&&f.exists()&&!f.delete())throw new IOException("Could not clear temporary file");}
+    private void clearTemporary(){if(ProcessingState.isRunning(this)){problem(t("Wait for processing to finish before clearing temporary files.", "Wait for processing to finish before clearing temporary files."),new IOException("Processing is active"));return;}AlertDialog d=new AlertDialog.Builder(this).setTitle(t("Clear temporary files?", "Clear temporary files?")).setMessage(t("Leftover processing files will be removed. The current preview, selected video, saved videos, and offline model are kept.","Leftover processing files will be removed. The current preview, selected video, saved videos, and offline model are kept." )).setNegativeButton(t("Cancel", "Cancel"),null).setPositiveButton(t("Clear", "Clear"),(dialog,w)->new Thread(()->{try{java.util.HashSet<String> keep=new java.util.HashSet<>();addProtectedPath(keep,cleanedVideo);addProtectedPath(keep,selectedVideo);for(String area:new String[]{"processing","imports"}){File folder=new File(getCacheDir(),area);clearInside(folder,folder.getCanonicalPath(),keep);}runOnUiThread(this::settings);}catch(Exception e){runOnUiThread(()->problem(t("Temporary files could not be cleared.", "Temporary files could not be cleared."),e));}},"Clear-processing-cache").start()).create();d.setOnShowListener(v->d.getButton(AlertDialog.BUTTON_POSITIVE).setTextColor(dark?0xFFFFB4AB:0xFFB3261E));d.show();}
+    private void addProtectedPath(java.util.Set<String> keep,Uri uri)throws IOException{if(uri!=null&&"file".equals(uri.getScheme())&&uri.getPath()!=null)keep.add(new File(uri.getPath()).getCanonicalPath());}
+    private void clearInside(File f,String rootPath,java.util.Set<String> keep)throws Exception{if(!f.exists())return;if(ProcessingState.isRunning(this))throw new IOException("Processing started; cleanup stopped");String path=f.getCanonicalPath();if(!path.equals(rootPath)&&!path.startsWith(rootPath+File.separator))throw new IOException("Outside temporary cache");if(keep.contains(path))return;File[] children=f.listFiles();if(children!=null)for(File child:children)clearInside(child,rootPath,keep);children=f.listFiles();if(!path.equals(rootPath)&&(children==null||children.length==0)&&f.exists()&&!f.delete())throw new IOException("Could not clear temporary file");}
     private String appVersion(){try{return getPackageManager().getPackageInfo(getPackageName(),0).versionName;}catch(Exception e){return "";}}
     private void about(){page(t("About Music Filter", "About Music Filter"),"about");label(body,t("Keep the voice. Remove the music.", "Keep the voice. Remove the music."),24,accent);gap(12);label(body,t("Music Filter removes background music from imported videos while preserving useful speech and vocals as much as possible.", "Music Filter removes background music from imported videos while preserving useful speech and vocals as much as possible."),17,ink);gap(16);settingRow(t("Why Music Filter was created", "Why Music Filter was created"),"",this::why);gap(16);label(body,t("Designed & Developed by\nEbrahim Al-Shami", "Designed & Developed by\nEbrahim Al-Shami"),16,accent);gap(16);settingRow(t("Privacy", "Privacy"),"",this::privacy);settingRow(t("Licences", "Licences"),"",this::licences);label(body,"Music Filter • "+appVersion(),13,muted);}
     private void why(){page(t("Why Music Filter", "Why Music Filter"),"why");label(body,t("Why Music Filter was created", "Why Music Filter was created"),24,accent);

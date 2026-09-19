@@ -19,7 +19,7 @@ final class ProcessingState {
         int getInt(String key, int fallback) { return data.optInt(key, fallback); }
         long getLong(String key, long fallback) { return data.optLong(key, fallback); }
     }
-    static Snapshot read(Context context) {
+    static synchronized Snapshot read(Context context) {
         try { return new Snapshot(new JSONObject(new String(file(context).readFully(), StandardCharsets.UTF_8))); }
         catch (Exception ignored) { return new Snapshot(new JSONObject()); }
     }
@@ -40,6 +40,21 @@ final class ProcessingState {
         } catch (Exception error) {
             if (stream != null) target.failWrite(stream);
         }
+    }
+    /** Forget only an inactive job; retaining media files is a separate UI decision. */
+    static synchronized boolean clearInactive(Context context) {
+        if (isRunning(context)) return false;
+        file(context).delete();
+        context.getSharedPreferences(MediaProcessingService.PREFS, Context.MODE_PRIVATE).edit().clear().commit();
+        return true;
+    }
+    /** A late callback must never resurrect a dismissed or superseded job. */
+    static synchronized boolean writeIfCurrent(Context context, String jobId, String status, String source, String message, int percent, String output, int attempt) {
+        Snapshot current = read(context);
+        if (jobId == null || !jobId.equals(current.getString("jobId", ""))
+                || !"RUNNING".equals(current.getString("status", ""))) return false;
+        write(context, jobId, status, source, message, percent, output, attempt);
+        return true;
     }
     @SuppressWarnings("deprecation")
     static boolean isRunning(Context context) {
