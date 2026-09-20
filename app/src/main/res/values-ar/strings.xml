@@ -1,0 +1,163 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string-array name="localized_text">
+        <item>Keep the voice.@@احتفظ بالصوت.</item>
+        <item>Remove background music from imported videos on your phone. Your imported videos stay on this device. Processing can take time, depending on your phone and video.@@أزل موسيقى الخلفية من الفيديوهات المستوردة على هاتفك. تبقى فيديوهاتك على هذا الجهاز. قد تستغرق المعالجة بعض الوقت حسب هاتفك والفيديو.</item>
+        <item>Get started@@ابدأ</item>
+        <item>Only shared video files can be opened here.@@يمكن فتح ملفات الفيديو المشتركة فقط هنا.</item>
+        <item>Processing is still running@@المعالجة ما زالت جارية</item>
+        <item>The shared video was not selected because the current video is still being processed.@@لم يتم اختيار الفيديو المشترك لأن معالجة الفيديو الحالي ما زالت جارية.</item>
+        <item>OK@@حسنًا</item>
+        <item>Preparing shared video…@@جارٍ تحضير الفيديو المشترك…</item>
+        <item>The shared video could not be opened. Try sharing it again.@@تعذر فتح الفيديو المشترك. حاول مشاركته مرة أخرى.</item>
+        <item>Back@@رجوع</item>
+        <item>Settings@@الإعدادات</item>
+        <item>Removing music@@جارٍ إزالة الموسيقى</item>
+        <item>You can leave this screen. Android battery restrictions may slow background processing.@@يمكنك مغادرة هذه الشاشة. قد تؤدي قيود بطارية Android إلى إبطاء المعالجة في الخلفية.</item>
+        <item>Cancel@@إلغاء</item>
+        <item>Processing interrupted@@توقفت المعالجة</item>
+        <item>The previous processing job stopped before it could finish.@@توقفت مهمة المعالجة السابقة قبل اكتمالها.</item>
+        <item>Try again@@حاول مرة أخرى</item>
+        <item>Choose another video@@اختيار فيديو آخر</item>
+        <item>Keep the voice. Remove the music.@@احتفظ بالصوت. أزل الموسيقى.</item>
+        <item>Choose a video to remove its background music while keeping speech and vocals.@@اختر فيديو لإزالة موسيقى الخلفية منه مع الحفاظ على الكلام والأصوات.</item>
+        <item>Select Video@@اختيار فيديو</item>
+        <item>Private • Offline processing@@خاص • معالجة دون اتصال</item>
+        <item>Original@@الأصلي</item>
+        <item>Music removed@@بعد إزالة الموسيقى</item>
+        <item>15-second test ready@@اختبار 15 ثانية جاهز</item>
+        <item>Preview ready@@المعاينة جاهزة</item>
+        <item>Process selected range@@معالجة الجزء المحدد</item>
+        <item>Process full video@@معالجة الفيديو بالكامل</item>
+        <item>Back to selected video@@العودة إلى الفيديو المحدد</item>
+        <item>Save@@حفظ</item>
+        <item>Share@@مشاركة</item>
+        <item>Extract Audio@@استخراج الصوت</item>
+        <item>Processing could not finish.@@تعذر إكمال المعالجة.</item>
+        <item>Remove Music@@إزالة الموسيقى</item>
+        <item>Test 15 seconds@@اختبار 15 ثانية</item>
+        <item>The entire video is processed locally. Longer videos can take several minutes or more.@@تتم معالجة الفيديو بالكامل على جهازك. قد تستغرق الفيديوهات الأطول عدة دقائق أو أكثر.</item>
+        <item>Process another video@@معالجة فيديو آخر</item>
+        <item>Entire video@@الفيديو بالكامل</item>
+        <item>Processing range@@نطاق المعالجة</item>
+        <item>Start time (MM:SS)@@وقت البداية (د:ث)</item>
+        <item>End time (MM:SS)@@وقت النهاية (د:ث)</item>
+        <item>Select section@@اختيار جزء</item>
+        <item>Use section@@استخدام الجزء</item>
+        <item>Enter a valid range inside the video.@@أدخل نطاقًا صحيحًا داخل الفيديو.</item>
+        <item>Checking video…@@جارٍ التحقق من الفيديو…</item>
+        <item>Could not start processing. Please keep this screen open and try again.@@تعذر بدء المعالجة. أبقِ هذه الشاشة مفتوحة وحاول مرة أخرى.</item>
+        <item>Preparing offline AI model…@@جارٍ تحضير نموذج الذكاء الاصطناعي دون اتصال…</item>
+        <item>The offline AI model could not be prepared. Tap to retry.@@تعذر تحضير نموذج الذكاء الاصطناعي دون اتصال. اضغط لإعادة المحاولة.</item>
+        <item>Stop processing?@@هل تريد إيقاف المعالجة؟</item>
+        <item>Current processing progress will be lost.@@سيتم فقدان تقدم المعالجة الحالي.</item>
+        <item>Keep processing@@متابعة المعالجة</item>
+        <item>Stop@@إيقاف</item>
+        <item>Selected video@@الفيديو المحدد</item>
+        <item>This video does not contain an audio track.@@لا يحتوي هذا الفيديو على مسار صوتي.</item>
+        <item>This is not a valid playable video.@@هذا ليس فيديو صالحًا للتشغيل.</item>
+        <item>This video\'s audio or video format is not supported on this phone.@@تنسيق الصوت أو الفيديو في هذا الملف غير مدعوم على هذا الهاتف.</item>
+        <item>This video could not be opened. Select it again and retry.@@تعذر فتح هذا الفيديو. اختره مرة أخرى وأعد المحاولة.</item>
+        <item>This preview cannot be played. Try another video or open the saved file in another player.@@تعذر تشغيل هذه المعاينة. جرّب فيديو آخر أو افتح الملف المحفوظ في مشغل آخر.</item>
+        <item>Playback speed@@سرعة التشغيل</item>
+        <item>Volume@@مستوى الصوت</item>
+        <item>Preview volume@@مستوى صوت المعاينة</item>
+        <item>Exit full screen@@الخروج من ملء الشاشة</item>
+        <item>Full screen@@ملء الشاشة</item>
+        <item>Save video as@@حفظ الفيديو باسم</item>
+        <item>Save audio as@@حفظ الصوت باسم</item>
+        <item>Saved@@تم الحفظ</item>
+        <item>Video saved to Gallery@@تم حفظ الفيديو في المعرض</item>
+        <item>Open@@فتح</item>
+        <item>Done@@تم</item>
+        <item>Could not save the video.@@تعذر حفظ الفيديو.</item>
+        <item>Extracting processed audio…@@جارٍ استخراج الصوت المعالج…</item>
+        <item>Could not extract the processed audio.@@تعذر استخراج الصوت المعالج.</item>
+        <item>Audio saved to Music/MusicFilter@@تم حفظ الصوت في Music/MusicFilter</item>
+        <item>Share Audio@@مشاركة الصوت</item>
+        <item>Could not save the audio.@@تعذر حفظ الصوت.</item>
+        <item>No app is available to share this file.@@لا يتوفر تطبيق لمشاركة هذا الملف.</item>
+        <item>No compatible player is installed.@@لا يوجد مشغل متوافق مثبت.</item>
+        <item>Could not save. Check the destination and available storage.@@تعذر الحفظ. تحقق من الوجهة ومساحة التخزين المتاحة.</item>
+        <item>Audio ready@@الصوت جاهز</item>
+        <item>Processed audio@@الصوت المعالج</item>
+        <item>Save Audio@@حفظ الصوت</item>
+        <item>Something needs attention@@هناك أمر يحتاج إلى انتباهك</item>
+        <item>General@@عام</item>
+        <item>Theme@@المظهر</item>
+        <item>System default@@النظام</item>
+        <item>Light@@فاتح</item>
+        <item>Dark@@داكن</item>
+        <item>Language@@اللغة</item>
+        <item>Playback@@التشغيل</item>
+        <item>Default playback speed@@سرعة التشغيل الافتراضية</item>
+        <item>Keep screen awake@@إبقاء الشاشة قيد التشغيل</item>
+        <item>While Music Filter is open and processing.@@أثناء فتح ⁨Music Filter⁩ وإجراء المعالجة.</item>
+        <item>Keep screen awake while processing@@إبقاء الشاشة قيد التشغيل أثناء المعالجة</item>
+        <item>Processing@@المعالجة</item>
+        <item>Background processing@@المعالجة في الخلفية</item>
+        <item>Continues when you leave the app; battery restrictions may slow it.@@تستمر عند مغادرة التطبيق؛ وقد تؤدي قيود البطارية إلى إبطائها.</item>
+        <item>Processing runs in a foreground service. Android battery restrictions may slow or interrupt it. Review Music Filter\'s battery settings if needed.@@تعمل المعالجة من خلال خدمة في الواجهة الأمامية. قد تؤدي قيود بطارية Android إلى إبطائها أو إيقافها. راجع إعدادات بطارية ⁨Music Filter⁩ عند الحاجة.</item>
+        <item>Open settings@@فتح الإعدادات</item>
+        <item>Notifications@@الإشعارات</item>
+        <item>Progress and completion@@التقدم والاكتمال</item>
+        <item>Model@@النموذج</item>
+        <item>Offline AI model@@نموذج الذكاء الاصطناعي دون اتصال</item>
+        <item>Storage@@التخزين</item>
+        <item>Save location@@موقع الحفظ</item>
+        <item>Videos are saved to Movies/MusicFilter only after you tap Save.@@تُحفظ الفيديوهات في Movies/MusicFilter فقط بعد الضغط على حفظ.</item>
+        <item>Temporary files@@الملفات المؤقتة</item>
+        <item>Clear temporary files@@مسح الملفات المؤقتة</item>
+        <item>Keeps the current preview and selected video@@يُبقي المعاينة الحالية والفيديو المحدد</item>
+        <item>Save processing report@@حفظ تقرير المعالجة</item>
+        <item>Device information and timings only@@معلومات الجهاز والتوقيتات فقط</item>
+        <item>About@@حول التطبيق</item>
+        <item>About Music Filter@@حول ⁨Music Filter⁩</item>
+        <item>Why Music Filter was created@@لماذا أنشأت ⁨Music Filter⁩؟</item>
+        <item>Privacy@@الخصوصية</item>
+        <item>Licences@@التراخيص</item>
+        <item>App version@@إصدار التطبيق</item>
+        <item>Ready@@جاهز</item>
+        <item>Preparation failed • Tap to retry@@فشل التحضير • اضغط لإعادة المحاولة</item>
+        <item>Bundled • Preparing…@@مضمّن • جارٍ التحضير…</item>
+        <item>Storage used@@مساحة التخزين المستخدمة</item>
+        <item>Included with this app. No download is required. Model updates are delivered with app updates.@@مضمّن مع هذا التطبيق ولا يتطلب تنزيلًا. تصل تحديثات النموذج مع تحديثات التطبيق.</item>
+        <item>Retry preparation@@إعادة محاولة التحضير</item>
+        <item>Wait for processing to finish before clearing temporary files.@@انتظر حتى تنتهي المعالجة قبل مسح الملفات المؤقتة.</item>
+        <item>Clear temporary files?@@هل تريد مسح الملفات المؤقتة؟</item>
+        <item>Leftover processing files will be removed. The current preview, selected video, saved videos, and offline model are kept.@@ستتم إزالة ملفات المعالجة المتبقية. ستبقى المعاينة الحالية والفيديو المحدد والفيديوهات المحفوظة والنموذج دون اتصال.</item>
+        <item>Clear@@مسح</item>
+        <item>Temporary files could not be cleared.@@تعذر مسح الملفات المؤقتة.</item>
+        <item>Music Filter removes background music from imported videos while preserving useful speech and vocals as much as possible.@@يزيل ⁨Music Filter⁩ موسيقى الخلفية من الفيديوهات المستوردة مع الحفاظ على الكلام والأصوات المفيدة قدر الإمكان.</item>
+        <item>Designed &amp; Developed by\nEbrahim Al-Shami@@تصميم وتطوير\nEbrahim Al-Shami</item>
+        <item>Your videos stay on your device.@@تبقى فيديوهاتك على جهازك.</item>
+        <item>No video is uploaded for imported-video processing. Saved videos and extracted audio remain until you remove them. Sharing uses the app you choose and its privacy policy. Diagnostic reports contain device and timing information, not your audio or video. Music Filter operates entirely offline without network access.@@لا يتم رفع أي فيديو لمعالجة الفيديوهات المستوردة. تبقى الفيديوهات المحفوظة والمقاطع الصوتية المستخرجة حتى تحذفها. تستخدم المشاركة التطبيق الذي تختاره وسياسة الخصوصية الخاصة به. تحتوي تقارير التشخيص على معلومات الجهاز والتوقيت فقط، ولا تحتوي على الصوت أو الفيديو. يعمل ⁨Music Filter⁩ بالكامل دون اتصال بالشبكة.</item>
+        <item>Music Filter uses AndroidX Media3, ONNX Runtime, and JTransforms.@@يستخدم ⁨Music Filter⁩ مكتبات AndroidX Media3 وONNX Runtime وJTransforms.</item>
+        <item>Open-source component licences are included with their respective distributions.@@تأتي تراخيص مكونات المصدر المفتوح مع توزيعاتها الخاصة.</item>
+        <item>Preparing 15-second test@@جارٍ تحضير اختبار 15 ثانية</item>
+        <item>Preparing selected section@@جارٍ تحضير الجزء المحدد</item>
+        <item>Preparing the full video@@جارٍ تحضير الفيديو بالكامل</item>
+        <item>Saving to your phone@@جارٍ الحفظ على هاتفك</item>
+        <item>Reading the complete file…@@جارٍ قراءة الملف بالكامل…</item>
+        <item>Reading the complete audio…@@جارٍ قراءة الصوت بالكامل…</item>
+        <item>Saving the full video…@@جارٍ حفظ الفيديو بالكامل…</item>
+        <item>Full video ready.@@الفيديو الكامل جاهز.</item>
+        <item>Working@@جارٍ العمل</item>
+        <item>Waiting for Android@@في انتظار Android</item>
+        <item>Cancelling after the current audio step@@جارٍ الإلغاء بعد خطوة الصوت الحالية</item>
+        <item>complete@@مكتمل</item>
+        <item>m@@د</item>
+        <item>s elapsed.@@ث مضت.</item>
+        <item>Processing stopped unexpectedly. Please try again.@@توقفت المعالجة بشكل غير متوقع. حاول مرة أخرى.</item>
+        <item>Processing cancelled. Your original file is unchanged.@@تم إلغاء المعالجة. لم يتغير ملفك الأصلي.</item>
+        <item>Processing stopped because Android\'s time limit was reached. Please try again with the app open.@@توقفت المعالجة بسبب بلوغ الحد الزمني لنظام Android. حاول مرة أخرى مع إبقاء التطبيق مفتوحًا.</item>
+        <item>Processing was interrupted. Please try again.@@توقفت المعالجة. حاول مرة أخرى.</item>
+        <item>There is not enough storage space to process this video.@@لا توجد مساحة تخزين كافية لمعالجة هذا الفيديو.</item>
+        <item>The offline AI model could not be prepared. Open Settings and tap Offline AI model to retry.@@تعذر تحضير نموذج الذكاء الاصطناعي دون اتصال. افتح الإعدادات واضغط على نموذج الذكاء الاصطناعي دون اتصال لإعادة المحاولة.</item>
+        <item>This video\'s audio format is not supported on this phone.@@تنسيق الصوت في هذا الفيديو غير مدعوم على هذا الهاتف.</item>
+        <item>This video could not be processed. Your original file is unchanged.@@تعذرت معالجة هذا الفيديو. لم يتغير ملفك الأصلي.</item>
+        <item>Your test is ready@@اختبارك جاهز</item>
+        <item>Your video is ready@@الفيديو جاهز</item>
+        <item>Your audio is ready@@الصوت جاهز</item>
+    </string-array>
+</resources>

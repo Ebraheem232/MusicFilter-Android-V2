@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name" translatable="false">Music Filter</string>
+    <!-- English UI text remains the source text in MainActivity. Arabic is supplied
+         by the locale-specific resource below so runtime language switching has one
+         complete translation table instead of scattered Java literals. -->
+    <string-array name="localized_text">
+        <item />
+    </string-array>
+</resources>

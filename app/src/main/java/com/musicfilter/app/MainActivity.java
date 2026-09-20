@@ -15,6 +15,7 @@ import androidx.media3.common.*;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.ui.PlayerView;
 import java.io.*;
+import java.util.HashMap;
 import java.util.Locale;
 
 /** Focused offline workspace. Processing remains owned by MediaProcessingService. */
@@ -37,13 +38,26 @@ public final class MainActivity extends Activity {
     private int bg, surface, ink, muted, accent;
     private Uri exportSource;
     private String exportMime = "video/mp4";
+    private HashMap<String,String> localizedText;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private android.window.OnBackInvokedCallback backCallback;
     private final BroadcastReceiver receiver = new BroadcastReceiver() {
         public void onReceive(Context c, Intent i) { refresh(); }
     };
     private SharedPreferences prefs() { return getSharedPreferences("interface", MODE_PRIVATE); }
-    private String t(String en, String arabic) { return ar ? arabic : en; }
+    private String t(String en, String arabic) {
+        if (!ar) return en;
+        if (localizedText == null) {
+            localizedText = new HashMap<>();
+            for (String entry : getResources().getStringArray(R.array.localized_text)) {
+                int split = entry.indexOf("@@");
+                if (split > 0) localizedText.put(entry.substring(0, split), entry.substring(split + 2));
+            }
+        }
+        String translated = localizedText.get(en);
+        return translated == null ? arabic : translated;
+    }
+    private String bidi(String value) { return android.text.BidiFormatter.getInstance(ar).unicodeWrap(value == null ? "" : value); }
     @Override protected void attachBaseContext(Context base) {
         String language=base.getSharedPreferences("interface",MODE_PRIVATE).getString("language","en");
         Configuration config=new Configuration(base.getResources().getConfiguration());
@@ -174,7 +188,7 @@ public final class MainActivity extends Activity {
     @Override protected void onDestroy() { handler.removeCallbacksAndMessages(null);clearChecking();if(Build.VERSION.SDK_INT>=33&&backCallback!=null)getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(backCallback);releaseAudioPreview(); player.release(); super.onDestroy(); }
     private int dp(int n) { return Math.round(n * getResources().getDisplayMetrics().density); }
     private GradientDrawable shape(int color, int radius) { GradientDrawable d = new GradientDrawable(); d.setColor(color); d.setCornerRadius(dp(radius)); return d; }
-    private TextView text(String s, int size, int color) { TextView v = new TextView(this); v.setText(s); v.setTextSize(size); v.setTextColor(color); v.setPadding(0,dp(4),0,dp(4));v.setLineSpacing(dp(2),1.08f); return v; }
+    private TextView text(String s, int size, int color) { TextView v = new TextView(this); v.setText(s); v.setTextSize(size); v.setTextColor(color); v.setPadding(0,dp(4),0,dp(4));v.setLineSpacing(dp(2),1.08f);v.setTextDirection(View.TEXT_DIRECTION_FIRST_STRONG);v.setGravity(Gravity.START); return v; }
     private void label(LinearLayout parent, String s, int size, int color) { parent.addView(text(s,size,color)); }
     private android.graphics.drawable.Drawable touchBackground(int color, int radius) {
         return new android.graphics.drawable.RippleDrawable(android.content.res.ColorStateList.valueOf(dark?0x2286D9BC:0x22127C6F),shape(color,radius),null);
@@ -227,14 +241,14 @@ public final class MainActivity extends Activity {
         if (running) {
             String source = s.getString("source",null); if(source != null) selectedVideo = Uri.parse(source);
             long start=s.data.optBoolean("sample",false)?s.getLong("selectionStartUs",-1):s.getLong("rangeStartUs",-1),end=s.data.optBoolean("sample",false)?s.getLong("selectionEndUs",-1):s.getLong("rangeEndUs",-1);if(start>=0&&end>start){sectionStartMs=start/1000;sectionEndMs=end/1000;}
-            LinearLayout c = card(); label(c,t("Removing music", "Removing music"),24,ink); label(c,fileName(selectedVideo),14,muted);
+            LinearLayout c = card(); label(c,t("Removing music", "Removing music"),24,ink); label(c,bidi(fileName(selectedVideo)),14,muted);
             progress = new ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal); progress.setMax(100); progress.setProgressTintList(android.content.res.ColorStateList.valueOf(accent)); c.addView(progress,new LinearLayout.LayoutParams(-1,dp(12)));
             progressText = text("",16,ink);progressText.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE); c.addView(progressText);
             label(c,t("You can leave this screen. Android battery restrictions may slow background processing.", "You can leave this screen. Android battery restrictions may slow background processing."),14,muted);
             c.addView(button(t("Cancel", "Cancel"),true,this::cancel)); updateProgress(s); return;
         } else if (belongsToSelection && lastState.equals("RUNNING") && !running) {
             String source = s.getString("source",null); if(source != null) selectedVideo = Uri.parse(source);
-            LinearLayout c = card(); label(c,t("Processing interrupted", "Processing interrupted"),24,ink); label(c,fileName(selectedVideo),14,muted);
+            LinearLayout c = card(); label(c,t("Processing interrupted", "Processing interrupted"),24,ink); label(c,bidi(fileName(selectedVideo)),14,muted);
             label(c,t("The previous processing job stopped before it could finish.", "The previous processing job stopped before it could finish."),16,dark?0xFFFFB4AB:0xFFB3261E);
             c.addView(button(t("Try again", "Try again"),true,()->retryJob(s)));
             c.addView(button(t("Choose another video", "Choose another video"),false,this::chooseVideo)); return;
@@ -268,7 +282,7 @@ public final class MainActivity extends Activity {
             body.addView(button(t("Extract Audio", "Extract Audio"),false,this::extractAudio));
         } else {
             if (belongsToSelection && (lastState.equals("FAILED") || lastState.equals("CANCELLED") || lastState.equals("INTERRUPTED"))) {
-                label(body, t("Processing could not finish. ", "Processing could not finish. ") + s.getString("message", ""), 14, dark ? 0xFFFFB4AB : 0xFFB3261E);
+                label(body, t("Processing could not finish.", "Processing could not finish.") + " " + localizedStatus(s.getString("message", "")), 14, dark ? 0xFFFFB4AB : 0xFFB3261E);
                 body.addView(button(t("Try again", "Try again"), true, ()->retryJob(s)));
             } else {
                 processingRangeControls();
@@ -289,9 +303,29 @@ public final class MainActivity extends Activity {
     }
     private void showMedia(Uri uri, boolean retain) { if (uri == null || uri.equals(playing)) return; long position = retain ? player.getCurrentPosition() : 0; boolean play = retain && player.getPlayWhenReady();long duration=retain?mediaDuration(uri):-1;if(duration>0)position=Math.min(position,Math.max(0,duration-1));playing = uri; player.setMediaItem(MediaItem.fromUri(uri)); player.prepare(); player.seekTo(Math.max(0,position)); player.setPlayWhenReady(play); }
     private void refresh() { if (!screen.equals("home") || fullscreen) return; ProcessingState.Snapshot s = ProcessingState.read(this); boolean running = ProcessingState.isRunning(this); if (!lastState.equals(s.getString("status","")) || running != (progress != null)) { if (running) fresh = false; home(); } else if(running) updateProgress(s); }
-    private void updateProgress(ProcessingState.Snapshot s) { int p = s.getInt("percent",0); progress.setProgress(p); progressText.setText(p+"%  "+(ar ? arabicStage(s.getString("message","")) : s.getString("message","Working"))); if(prefs().getBoolean("awake",false))getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); }
-    static String arabicStage(String message) {
-        return message;
+    private void updateProgress(ProcessingState.Snapshot s) { int p = s.getInt("percent",0); progress.setProgress(p); progressText.setText(bidi(p+"%")+"  "+(ar ? arabicStage(s.getString("message","")) : s.getString("message","Working"))); if(prefs().getBoolean("awake",false))getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); }
+    private String arabicStage(String message) {
+        if (message == null || message.isEmpty()) return t("Working", "Working");
+        String[] lines = message.split("\\n", 2);
+        String base = lines[0].replace(" You can use other apps.", "");
+        if (base.startsWith("Removing music — ")) {
+            String amount = base.substring("Removing music — ".length()).replace(" complete.", "");
+            base = t("Removing music", "Removing music") + " — " + bidi(amount) + " " + t("complete", "complete");
+        } else {
+            base = t(base, base);
+        }
+        if (lines.length == 1) return base;
+        java.util.regex.Matcher elapsed = java.util.regex.Pattern.compile("^(.*?)\\s+(\\d+)m (\\d+)s elapsed\\.$").matcher(lines[1]);
+        if (!elapsed.matches()) return base + "\n" + t(lines[1], lines[1]);
+        return base + "\n" + t(elapsed.group(1), elapsed.group(1)) + "  "
+                + bidi(elapsed.group(2)) + t("m", "m") + " " + bidi(elapsed.group(3)) + t("s elapsed.", "s elapsed.");
+    }
+    private String localizedStatus(String message) {
+        if (!ar || message == null || message.isEmpty()) return message == null ? "" : message;
+        String translated = t(message, message);
+        if (!translated.equals(message)) return translated;
+        if (message.startsWith("Could not start processing:")) return t("Could not start processing. Please keep this screen open and try again.", message);
+        return arabicStage(message);
     }
     private void chooseVideo() { startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT).setType("video/*").addCategory(Intent.CATEGORY_OPENABLE).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION),1); }
     private void processingRangeControls(){
@@ -394,7 +428,7 @@ public final class MainActivity extends Activity {
         return t("Selected video", "Selected video");
     }
     private String videoDetails(Uri uri) {
-        String name=fileName(uri);long size=-1,duration=-1;
+        String name=bidi(fileName(uri));long size=-1,duration=-1;
         try {
             if("file".equals(uri.getScheme()))size=new File(uri.getPath()).length();
             else try(android.database.Cursor c=getContentResolver().query(uri,new String[]{OpenableColumns.SIZE},null,null,null)){if(c!=null&&c.moveToFirst()&&!c.isNull(0))size=c.getLong(0);}
@@ -402,8 +436,8 @@ public final class MainActivity extends Activity {
         android.media.MediaMetadataRetriever metadata=new android.media.MediaMetadataRetriever();
         try { metadata.setDataSource(this,uri);String value=metadata.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION);if(value!=null)duration=Long.parseLong(value); } catch(Exception ignored){} finally {try{metadata.release();}catch(Exception ignored){}}
         StringBuilder details=new StringBuilder(name);
-        if(duration>=0)details.append("  •  ").append(formatDuration(duration));
-        if(size>=0)details.append("  •  ").append(android.text.format.Formatter.formatShortFileSize(this,size));
+        if(duration>=0)details.append("  •  ").append(bidi(formatDuration(duration)));
+        if(size>=0)details.append("  •  ").append(bidi(android.text.format.Formatter.formatShortFileSize(this,size)));
         return details.toString();
     }
     private long mediaDuration(Uri uri){android.media.MediaMetadataRetriever metadata=new android.media.MediaMetadataRetriever();try{metadata.setDataSource(this,uri);String value=metadata.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION);return value==null?-1:Long.parseLong(value);}catch(Exception ignored){return -1;}finally{try{metadata.release();}catch(Exception ignored){}}}
@@ -449,7 +483,7 @@ public final class MainActivity extends Activity {
 
     private void promptSaveVideo(Uri source){renameBeforeSave(t("Save video as","حفظ الفيديو باسم"),safeStem(fileName(selectedVideo))+"_music_removed.mp4",".mp4",name->saveToGallery(source,name));}
     private void promptSaveAudio(Uri source,String defaultName){renameBeforeSave(t("Save audio as","حفظ الصوت باسم"),defaultName,".m4a",name->saveAudio(source,name));}
-    private void renameBeforeSave(String title,String defaultName,String extension,java.util.function.Consumer<String> save){EditText name=new EditText(this);name.setSingleLine(true);name.setText(defaultName);name.setSelectAllOnFocus(true);new AlertDialog.Builder(this).setTitle(title).setView(name).setNegativeButton(t("Cancel","إلغاء"),null).setPositiveButton(t("Save","حفظ"),(d,w)->save.accept(safeStem(name.getText().toString())+extension)).show();}
+    private void renameBeforeSave(String title,String defaultName,String extension,java.util.function.Consumer<String> save){EditText name=new EditText(this);name.setSingleLine(true);name.setTextDirection(View.TEXT_DIRECTION_LTR);name.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);name.setText(defaultName);name.setSelectAllOnFocus(true);new AlertDialog.Builder(this).setTitle(title).setView(name).setNegativeButton(t("Cancel","إلغاء"),null).setPositiveButton(t("Save","حفظ"),(d,w)->save.accept(safeStem(name.getText().toString())+extension)).show();}
     private void saveToGallery(Uri source,String requestedName) {
         new Thread(()->{
             try {
@@ -469,7 +503,7 @@ public final class MainActivity extends Activity {
                 }
                 values.clear(); values.put(android.provider.MediaStore.MediaColumns.IS_PENDING, 0);
                 getContentResolver().update(uri, values, null, null);
-                runOnUiThread(()->new android.app.AlertDialog.Builder(MainActivity.this).setTitle(t("Saved", "Saved")).setMessage(t("Video saved to Gallery", "Video saved to Gallery")).setPositiveButton(t("Open", "Open"),(d,w)->{
+                runOnUiThread(()->new android.app.AlertDialog.Builder(MainActivity.this).setTitle(t("Saved", "Saved")).setMessage(t("Video saved to Gallery", "Video saved to Gallery")).setNegativeButton(t("Done", "Done"),null).setPositiveButton(t("Open", "Open"),(d,w)->{
                     try{startActivity(new Intent(Intent.ACTION_VIEW).setDataAndType(uri,"video/mp4").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION));}catch(Exception ignored){}
                 }).show());
             } catch (Exception e) {
@@ -590,7 +624,7 @@ public final class MainActivity extends Activity {
                     else try(InputStream in=request==5?new android.util.AtomicFile(new File(getFilesDir(),"diagnostics/latest-performance.json")).openRead():getContentResolver().openInputStream(source);OutputStream out=getContentResolver().openOutputStream(uri,"wt")){
                         byte[] b=new byte[65536];int n;while((n=in.read(b))!=-1)out.write(b,0,n);
                     }
-                    runOnUiThread(()->new AlertDialog.Builder(this).setTitle(t("Saved", "Saved")).setMessage(fileName(uri)).setPositiveButton(t("Open", "Open"),(d,w)->{
+                    runOnUiThread(()->new AlertDialog.Builder(this).setTitle(t("Saved", "Saved")).setMessage(bidi(fileName(uri))).setPositiveButton(t("Open", "Open"),(d,w)->{
                         try{if(request==3){previewAudio(uri);return;}startActivity(new Intent(Intent.ACTION_VIEW).setDataAndType(uri,request==3?"audio/mp4":request==5?"application/json":"video/mp4").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION));}
                         catch(Exception e){problem(t("No compatible player is installed.", "No compatible player is installed."),e);}
                     }).setNeutralButton(t("Share", "Share"),(d,w)->share(uri,request==3?"audio/mp4":request==5?"application/json":"video/mp4")).setNegativeButton(t("Done", "Done"),null).show());
@@ -628,13 +662,13 @@ public final class MainActivity extends Activity {
     private String safeStem(String name){int dot=name.lastIndexOf('.');if(dot>0)name=name.substring(0,dot);name=name.replaceAll("[\\\\/:*?\"<>|\\p{Cntrl}]","_").replaceAll("[ .]+$","").trim();if(name.isEmpty())name="video";return name.length()>80?name.substring(0,80):name;}
     private String uniqueDisplayName(Uri collection,String path,String requested){String stem=safeStem(requested),extension=requested.toLowerCase(Locale.US).endsWith(".m4a")?".m4a":".mp4";String candidate=stem+extension;for(int i=2;i<1000;i++){try(android.database.Cursor c=getContentResolver().query(collection,new String[]{android.provider.MediaStore.MediaColumns._ID},android.provider.MediaStore.MediaColumns.RELATIVE_PATH+"=? AND "+android.provider.MediaStore.MediaColumns.DISPLAY_NAME+"=?",new String[]{path,candidate},null)){if(c==null||!c.moveToFirst())return candidate;}candidate=stem+" ("+i+")"+extension;}return System.currentTimeMillis()+extension;}
     private void previewAudio(Uri uri) {showAudioPreview(uri,fileName(uri),false);}
-    private void showAudioPreview(Uri uri,String name,boolean temporary){releaseAudioPreview();player.pause();extractedAudio=temporary?uri:null;audioPlayer=new ExoPlayer.Builder(this).build();PlayerView view=new PlayerView(this);view.setPlayer(audioPlayer);view.setControllerShowTimeoutMs(0);view.setShowNextButton(false);view.setShowPreviousButton(false);view.setBackgroundColor(Color.BLACK);view.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);LinearLayout content=new LinearLayout(this);content.setOrientation(LinearLayout.VERTICAL);TextView filename=text(name,14,muted);content.addView(filename);content.addView(view,new LinearLayout.LayoutParams(-1,dp(220)));audioPlayer.setMediaItem(MediaItem.fromUri(uri));audioPlayer.prepare();AlertDialog.Builder builder=new AlertDialog.Builder(this).setTitle(temporary?t("Audio ready","الصوت جاهز"):t("Processed audio","الصوت المعالج")).setView(content).setNegativeButton(t("Done","تم"),null).setNeutralButton(t("Share Audio","مشاركة الصوت"),(d,w)->share(uri,"audio/mp4"));if(temporary)builder.setPositiveButton(t("Save Audio","حفظ الصوت"),(d,w)->promptSaveAudio(uri,name));audioDialog=builder.create();audioDialog.setOnDismissListener(d->{view.setPlayer(null);if(audioPlayer!=null){audioPlayer.release();audioPlayer=null;}audioDialog=null;extractedAudio=null;});audioDialog.show();}
+    private void showAudioPreview(Uri uri,String name,boolean temporary){releaseAudioPreview();player.pause();extractedAudio=temporary?uri:null;audioPlayer=new ExoPlayer.Builder(this).build();PlayerView view=new PlayerView(this);view.setPlayer(audioPlayer);view.setControllerShowTimeoutMs(0);view.setShowNextButton(false);view.setShowPreviousButton(false);view.setBackgroundColor(Color.BLACK);view.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);LinearLayout content=new LinearLayout(this);content.setOrientation(LinearLayout.VERTICAL);TextView filename=text(bidi(name),14,muted);content.addView(filename);content.addView(view,new LinearLayout.LayoutParams(-1,dp(220)));audioPlayer.setMediaItem(MediaItem.fromUri(uri));audioPlayer.prepare();AlertDialog.Builder builder=new AlertDialog.Builder(this).setTitle(temporary?t("Audio ready","الصوت جاهز"):t("Processed audio","الصوت المعالج")).setView(content).setNegativeButton(t("Done","تم"),null).setNeutralButton(t("Share Audio","مشاركة الصوت"),(d,w)->share(uri,"audio/mp4"));if(temporary)builder.setPositiveButton(t("Save Audio","حفظ الصوت"),(d,w)->promptSaveAudio(uri,name));audioDialog=builder.create();audioDialog.setOnDismissListener(d->{view.setPlayer(null);if(audioPlayer!=null){audioPlayer.release();audioPlayer=null;}audioDialog=null;extractedAudio=null;});audioDialog.show();}
     private void releaseAudioPreview(){AlertDialog dialog=audioDialog;audioDialog=null;if(dialog!=null&&dialog.isShowing())dialog.dismiss();if(audioPlayer!=null){audioPlayer.release();audioPlayer=null;}extractedAudio=null;}
     private void problem(String message,Exception error) { android.util.Log.e("MusicFilterUI",message,error);if(isFinishing()||isDestroyed())return;new AlertDialog.Builder(this).setTitle(t("Something needs attention", "Something needs attention")).setMessage(message).setPositiveButton(t("OK", "OK"),null).show(); }
     private void section(String title){gap(16);TextView v=text(title,14,accent);v.setTypeface(null,Typeface.BOLD);body.addView(v);}
     private void settingRow(String title,String value,Runnable action){
         LinearLayout row=new LinearLayout(this);row.setGravity(Gravity.CENTER_VERTICAL);row.setMinimumHeight(dp(value.isEmpty()?56:72));row.setPaddingRelative(dp(4),dp(8),dp(4),dp(8));
-        LinearLayout words=new LinearLayout(this);words.setOrientation(1);TextView name=text(title,16,ink);name.setPadding(0,0,0,0);words.addView(name);if(!value.isEmpty()){TextView sub=text(value,14,muted);sub.setPadding(0,dp(4),0,0);if(value.contains("")||value.contains(" / ")){sub.setTextDirection(View.TEXT_DIRECTION_LTR);sub.setGravity(ar?Gravity.RIGHT:Gravity.LEFT);}words.addView(sub);}row.addView(words,new LinearLayout.LayoutParams(0,-2,1));
+        LinearLayout words=new LinearLayout(this);words.setOrientation(1);TextView name=text(title,16,ink);name.setPadding(0,0,0,0);words.addView(name);if(!value.isEmpty()){TextView sub=text(value,14,muted);sub.setPadding(0,dp(4),0,0);words.addView(sub);}row.addView(words,new LinearLayout.LayoutParams(0,-2,1));
         if(action!=null){ImageView arrow=new ImageView(this);arrow.setImageResource(R.drawable.ic_chevron_right);arrow.setColorFilter(muted);arrow.setScaleType(ImageView.ScaleType.CENTER_INSIDE);if(ar)arrow.setRotation(180f);row.addView(arrow,new LinearLayout.LayoutParams(dp(32),dp(48)));row.setBackground(touchBackground(Color.TRANSPARENT,12));row.setFocusable(true);row.setOnClickListener(v->action.run());}
         body.addView(row);
     }
