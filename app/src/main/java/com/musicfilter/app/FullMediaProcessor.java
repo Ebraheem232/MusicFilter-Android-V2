@@ -50,6 +50,15 @@ final class FullMediaProcessor {
             }
             if (t.audio < 0) throw new IOException("This file has no audio track to process.");
             if (t.video < 0) throw new IOException("This file is not a video.");
+            if (t.durationUs <= 0 && context != null) {
+                MediaMetadataRetriever metadata = new MediaMetadataRetriever();
+                try {
+                    metadata.setDataSource(context, source);
+                    String durationMs = metadata.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION);
+                    if (durationMs != null) t.durationUs = Long.parseLong(durationMs) * 1000L;
+                } catch (RuntimeException ignored) {
+                } finally { try { metadata.release(); } catch (Exception ignored) {} }
+            }
             if (t.durationUs <= 0) throw new IOException("This video has no usable duration.");
             if (new MediaCodecList(MediaCodecList.REGULAR_CODECS).findDecoderForFormat(t.audioFormat) == null)
                 throw new IOException("This phone cannot decode the file's audio format (" + t.audioFormat.getString(MediaFormat.KEY_MIME) + ").");

@@ -22,6 +22,7 @@ public final class MainActivity extends Activity {
     private Uri selectedVideo, cleanedVideo, playing, comparisonOriginal, extractedAudio;
     private ExoPlayer player, audioPlayer;
     private AlertDialog audioDialog;
+    private Toast checkingToast;
     private PlayerView playerView;
     private LinearLayout root, body;
     private TextView progressText;
@@ -37,6 +38,7 @@ public final class MainActivity extends Activity {
     private Uri exportSource;
     private String exportMime = "video/mp4";
     private final Handler handler = new Handler(Looper.getMainLooper());
+    private android.window.OnBackInvokedCallback backCallback;
     private final BroadcastReceiver receiver = new BroadcastReceiver() {
         public void onReceive(Context c, Intent i) { refresh(); }
     };
@@ -101,6 +103,7 @@ public final class MainActivity extends Activity {
             }
         }
         if(prefs().getBoolean("return_settings",false)){prefs().edit().remove("return_settings").apply();settings();}
+        if(Build.VERSION.SDK_INT>=33){backCallback=this::handleSystemBack;getOnBackInvokedDispatcher().registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT,backCallback);}
         ensureModel(false, null);
         if (!prefs().getBoolean("welcomed", false)) new AlertDialog.Builder(this).setTitle(t("Keep the voice.", "Keep the voice."))
             .setMessage(t("Remove background music from imported videos on your phone. Your imported videos stay on this device. Processing can take time, depending on your phone and video.", "Remove background music from imported videos on your phone. Your imported videos stay on this device. Processing can take time, depending on your phone and video."))
@@ -168,7 +171,7 @@ public final class MainActivity extends Activity {
     @Override protected void onSaveInstanceState(Bundle b) { if (selectedVideo != null) b.putString("selected", selectedVideo.toString()); b.putBoolean("fresh", fresh); if(exportSource!=null)b.putString("export",exportSource.toString());if(playing!=null)b.putString("playing",playing.toString());b.putLong("position",player.getCurrentPosition());b.putLong("sectionStartMs",sectionStartMs);b.putLong("sectionEndMs",sectionEndMs);b.putLong("sourceDurationMs",sourceDurationMs);super.onSaveInstanceState(b); }
     @Override protected void onResume() { super.onResume(); androidx.core.content.ContextCompat.registerReceiver(this, receiver, new IntentFilter(MediaProcessingService.ACTION_STATUS), androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED); refresh(); }
     @Override protected void onPause() { unregisterReceiver(receiver); player.pause(); getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); super.onPause(); }
-    @Override protected void onDestroy() { handler.removeCallbacksAndMessages(null); releaseAudioPreview(); player.release(); super.onDestroy(); }
+    @Override protected void onDestroy() { handler.removeCallbacksAndMessages(null);clearChecking();if(Build.VERSION.SDK_INT>=33&&backCallback!=null)getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(backCallback);releaseAudioPreview(); player.release(); super.onDestroy(); }
     private int dp(int n) { return Math.round(n * getResources().getDisplayMetrics().density); }
     private GradientDrawable shape(int color, int radius) { GradientDrawable d = new GradientDrawable(); d.setColor(color); d.setCornerRadius(dp(radius)); return d; }
     private TextView text(String s, int size, int color) { TextView v = new TextView(this); v.setText(s); v.setTextSize(size); v.setTextColor(color); v.setPadding(0,dp(4),0,dp(4));v.setLineSpacing(dp(2),1.08f); return v; }
@@ -320,22 +323,24 @@ public final class MainActivity extends Activity {
         final long startMs=sample?current:(sectionEndMs>sectionStartMs?sectionStartMs:-1);
         final long endMs=sample?Math.min(baseEnd,startMs+15000):(sectionEndMs>sectionStartMs?sectionEndMs:-1);
         checkingInput = true;
-        Toast.makeText(this,t("Checking video…", "Checking video…"),Toast.LENGTH_SHORT).show();
+        if(checkingToast!=null)checkingToast.cancel();
+        checkingToast=Toast.makeText(this,t("Checking video…", "Checking video…"),Toast.LENGTH_SHORT);checkingToast.show();
         new Thread(() -> {
             try {
                 FullMediaProcessor.Tracks tracks = FullMediaProcessor.inspect(this, input);
                 if (tracks.video < 0 || tracks.durationUs <= 0) throw new IOException("Invalid video duration");
                 runOnUiThread(() -> {
-                    checkingInput = false;
+                    clearChecking();
                     if (!input.equals(selectedVideo) || ProcessingState.isRunning(this)) return;
                     fresh=false; prefs().edit().putBoolean("fresh",false).apply();
                     ensureModel(true, ()->{ if(input.equals(selectedVideo)) startProcessing(input,startMs,endMs,sample); });
                 });
             } catch (Exception error) {
-                runOnUiThread(() -> { checkingInput = false; problem(inputProblem(error), error); });
+                runOnUiThread(() -> { clearChecking(); problem(inputProblem(error), error); });
             }
         }, "Video-preflight").start();
     }
+    private void clearChecking(){checkingInput=false;if(checkingToast!=null){checkingToast.cancel();checkingToast=null;}}
     private void retryJob(ProcessingState.Snapshot failed) {
         ProcessingState.Snapshot current = ProcessingState.read(this);
         String input = failed.getString("source", "");
@@ -691,5 +696,6 @@ public final class MainActivity extends Activity {
     private void whyParagraph(String value,boolean bold){TextView paragraph=text(value,bold?17:16,bold?accent:ink);paragraph.setTextDirection(ar?View.TEXT_DIRECTION_RTL:View.TEXT_DIRECTION_LTR);paragraph.setGravity(ar?Gravity.RIGHT:Gravity.LEFT);if(bold)paragraph.setTypeface(null,Typeface.BOLD);body.addView(paragraph);gap(12);}
     private void privacy(){page(t("Privacy", "Privacy"),"privacy");label(body,t("Your videos stay on your device.", "Your videos stay on your device."),24,accent);gap(12);label(body,t("No video is uploaded for imported-video processing. Saved videos and extracted audio remain until you remove them. Sharing uses the app you choose and its privacy policy. Diagnostic reports contain device and timing information, not your audio or video. Music Filter operates entirely offline without network access.", "No video is uploaded for imported-video processing. Saved videos and extracted audio remain until you remove them. Sharing uses the app you choose and its privacy policy. Diagnostic reports contain device and timing information, not your audio or video. Music Filter operates entirely offline without network access."),17,ink);}
     private void licences(){page(t("Licences", "Licences"),"licences");label(body,t("Music Filter uses AndroidX Media3, ONNX Runtime, and JTransforms.", "Music Filter uses AndroidX Media3, ONNX Runtime, and JTransforms."),16,ink);label(body,t("Open-source component licences are included with their respective distributions.", "Open-source component licences are included with their respective distributions."),15,muted);}
-    @Override public void onBackPressed(){if(!screen.equals("home"))navigateBack();else super.onBackPressed();}
+    private void handleSystemBack(){if(!screen.equals("home"))navigateBack();else finish();}
+    @Override public void onBackPressed(){handleSystemBack();}
 }
