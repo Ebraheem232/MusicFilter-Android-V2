@@ -1,66 +1,64 @@
-# Music Filter — Final Feature Set
+# Music Filter — Final Features
 
-Music Filter processes video fully offline on the device with the bundled DTTNet model. It preserves speech while removing or reducing background music, and it never permanently saves a result until the user explicitly chooses Save.
+**Feature freeze: v2.0.0**
 
-## Input and processing
+## Video input
 
-- Select a video from Android Gallery or Files, or share a video to Music Filter.
-- Review the filename, duration, file size, and preflight validation before processing.
-- Process the entire video or a validated start-to-end section.
-- Optionally process a temporary 15-second quality test from the current preview position.
-- Run the production offline DTTNet configuration in the background with progress, elapsed time, cancellation, retry, lifecycle recovery, and duplicate-job protection.
+- Select a local video through Android's document picker.
+- Receive a video shared from another Android app.
+- Show the selected filename, duration, and file size.
+- Validate the media container, duration, video track, and audio track before processing.
+- Preview the selected video with play/pause, seek, fullscreen, volume, and playback-speed controls.
 
-## Preview and comparison
+## Processing
 
-- Preview video with play/pause, seeking, fullscreen, volume, and playback-speed controls.
-- Switch between Original and Music removed while preserving playback position, play state, speed, and volume where practical.
-- Compare the exact same range for section and 15-second test results.
+- Run the bundled DTTNet Mixed-FP16 model fully on-device through ONNX Runtime CPU execution.
+- Process the entire video.
+- Process a user-selected start/end range.
+- Run a temporary 15-second test from the current preview position.
+- Display progress and elapsed-time status.
+- Cancel or retry work safely.
+
+## Comparison
+
+- Switch between **Original** and **Music removed** results.
+- Preserve playback position and play state when switching comparison mode.
+- Compare the same media range for full, section, and 15-second results.
 
 ## Video output
 
-- Preview, save, or share the processed video.
-- Rename the video before saving while preserving `.mp4` and using duplicate-safe naming in `Movies/MusicFilter`.
-- Share directly without saving first.
+- Preview the processed video before saving.
+- Rename the output before saving while preserving the `.mp4` extension.
+- Save to `Movies/MusicFilter` through Android `MediaStore`.
+- Avoid silently overwriting duplicate filenames.
+- Share a processed video without saving it first.
+- Process another video from the result screen.
 
-## Audio output
+## Audio extraction
 
-- Extract the processed, music-removed AAC audio to a temporary `.m4a` without rerunning DTTNet or transcoding.
-- Preview that audio with play/pause, seeking, current time, and total duration.
-- Rename before saving while preserving `.m4a` and using duplicate-safe naming in `Music/MusicFilter`.
-- Share directly without saving first.
+- Remux the processed music-removed AAC track to a temporary `.m4a` file.
+- Avoid rerunning DTTNet or transcoding the cleaned audio.
+- Preview extracted audio.
+- Rename and save audio to `Music/MusicFilter` with duplicate-safe naming.
+- Share extracted audio directly.
 
-## App behavior
+## Languages and localization
 
-- Processing notifications appear only while work is active; successful completion uses a separate dismissible notification.
-- Temporary files can be cleared while active input, processing, preview, sample, and extracted-audio files remain protected.
-- Settings include theme, English/Arabic language, default playback speed, keep-screen-awake behavior, background processing, notifications, offline AI model information, and storage controls.
-- About includes Music Filter information, the localized Why Music Filter was created page, privacy, licences, and app version.
-- Arabic content uses right-to-left layout and bidi-safe rendering for the Music Filter name.
+- English interface.
+- Arabic interface.
+- Right-to-left page layout, mirrored navigation, and bidi-safe mixed text and filenames.
+- Localized settings, processing/result states, dialogs, errors, About, Privacy, Licences, and Why Music Filter content.
 
-## Feature Freeze
+## Background and lifecycle behavior
 
-Music Filter's planned user-facing feature set is complete.
+- Foreground-service processing continues when the app leaves the foreground, subject to Android/device battery restrictions.
+- Active-processing and separate dismissible completion notifications.
+- Job identity prevents stale callbacks from replacing a newer selection.
+- Relaunch, cancellation, retry, and interrupted-job handling.
+- Temporary-file cleanup protects active input and preview files.
 
-Future development is limited to bug fixes, Android/device compatibility, performance improvements, security/privacy fixes, and AI separation model replacement or improvement unless the feature freeze is explicitly reopened.
+## Privacy and offline operation
 
-## Intentionally Excluded
-
-- YouTube downloader
-- Instagram downloader
-- TikTok downloader
-- Batch processing
-- History or library database
-- Cloud processing
-- Accounts or login
-- Cloud sync
-- Social or community system
-- Multiple AI models
-- AI-strength slider
-- EQ
-- Noise-removal suite
-- Full video editor
-- Crop, text, filters, or effects
-- MP3 transcoding
-- Embedded social apps
-- Subtitles
-- Unrelated AI tools
+- Media separation runs locally on the Android device.
+- No cloud processing server, account, or login is required.
+- Results are not permanently saved until the user explicitly chooses **Save**.
