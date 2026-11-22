@@ -118,6 +118,10 @@ Release APKs may be provided through GitHub Releases after production signing is
 
 **Music Filter v2.0.0 is feature-frozen and considered the current stable version.**
 
+## Author
+
+Designed and developed by [Ebrahim Al-Shami](https://github.com/Ebraheem232).
+
 ## License and attribution
 
 Original Music Filter source code is licensed under the [Apache License 2.0](LICENSE). That licence does not relicense third-party components or bundled model weights.
