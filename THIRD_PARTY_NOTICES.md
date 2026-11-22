@@ -33,7 +33,7 @@ under the same licence.
 
 ## Bundled DTTNet model weights
 
-Licence: **NOT VERIFIED**
+Redistribution permission: **GRANTED BY THE UPSTREAM AUTHOR**
 
 The repository includes the following DTTNet ONNX model weights:
 
@@ -43,11 +43,12 @@ The repository includes the following DTTNet ONNX model weights:
 - `dttnet_studentB_fp16.onnx`
 - `dttnet_studentB_mixed.onnx`
 
-No explicit checkpoint redistribution licence was found in the local records.
-The Apache License 2.0 declaration for DTTNet source code must not be assumed
-to cover these pretrained or converted weights. Confirm redistribution rights
-with the applicable model/checkpoint owner before publishing this repository
-or an APK that contains the weights.
+Junyu Chen, the DTTNet author, granted direct written permission to use and
+redistribute the pretrained DTTNet weights in a public GitHub repository and
+APK after being asked specifically about both forms of distribution. This is
+direct permission, not a claim that the source repository's Apache License 2.0
+automatically applies to pretrained checkpoints. No separate checkpoint
+licence file was found in the inspected upstream or local records.
 
 ## Production model provenance record
 

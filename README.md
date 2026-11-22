@@ -105,7 +105,7 @@ Replace this line with the final GitHub or LinkedIn demo link when it is ready.
 
 ## Download / APK
 
-Release APKs may be provided through GitHub Releases after production signing and model-redistribution checks are complete. The app is not currently published on the Google Play Store.
+Release APKs may be provided through GitHub Releases after production signing is complete. Direct permission to redistribute the bundled DTTNet weights in a public repository and APK was granted by the upstream author. The app is not currently published on the Google Play Store.
 
 ## Known limitations
 
@@ -122,7 +122,7 @@ Release APKs may be provided through GitHub Releases after production signing an
 
 Original Music Filter source code is licensed under the [Apache License 2.0](LICENSE). That licence does not relicense third-party components or bundled model weights.
 
-Runtime technologies and their upstream licences are summarized in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). The inspected DTTNet source repository declares Apache License 2.0, but its README does not separately state redistribution terms for downloaded checkpoints or bundled ONNX weights. Verify the model/checkpoint rights before publishing this repository or an APK containing a model.
+Runtime technologies and their upstream licences are summarized in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). The inspected DTTNet source repository declares Apache License 2.0. The upstream author separately granted direct permission to redistribute the bundled pretrained weights in a public repository and APK; this permission is not presented as a standalone checkpoint licence.
 
 ## Verification
 
